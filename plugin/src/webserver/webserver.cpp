@@ -14,6 +14,10 @@ extern "C" {
 // nlohmann/json
 #include <nlohmann/json.hpp>
 
+// Source & Scene managers
+#include "../source/source_manager.h"
+#include "../scene/scene_manager.h"
+
 // C++ 标准库
 #include <string>
 #include <vector>
@@ -151,6 +155,33 @@ static std::string read_request_body(struct mg_connection *conn) {
     return std::string(buf.data(), bytes_read);
 }
 
+// ============ 简洁响应辅助 ============
+
+static void resp_ok(struct mg_connection *conn) {
+    mg_response_header_start(conn, 200);
+    mg_response_header_add(conn, "Content-Type", "application/json", -1);
+    mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+    mg_response_header_send(conn);
+    mg_printf(conn, "{\"ok\":true}");
+}
+
+static void resp_json(struct mg_connection *conn, const nlohmann::json &j) {
+    std::string body = j.dump();
+    mg_response_header_start(conn, 200);
+    mg_response_header_add(conn, "Content-Type", "application/json", -1);
+    mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+    mg_response_header_send(conn);
+    mg_printf(conn, "%s", body.c_str());
+}
+
+static void resp_error(struct mg_connection *conn, int status, const std::string &msg) {
+    mg_response_header_start(conn, status);
+    mg_response_header_add(conn, "Content-Type", "application/json", -1);
+    mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+    mg_response_header_send(conn);
+    mg_printf(conn, "{\"error\":\"%s\"}", msg.c_str());
+}
+
 // ============ REST 路由处理器 ============
 
 // GET /api/system/health
@@ -256,9 +287,11 @@ static int handle_rec_stop(struct mg_connection *conn, void *cbdata) {
     return 200;
 }
 
+// ============ Scene 路由 ============
+
 // GET /api/scene/list
 static int handle_scene_list(struct mg_connection *conn, void *cbdata) {
-    (void)cbdata;
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
     const struct mg_request_info *ri = mg_get_request_info(conn);
 
     if (strcmp(ri->request_method, "OPTIONS") == 0) {
@@ -266,47 +299,58 @@ static int handle_scene_list(struct mg_connection *conn, void *cbdata) {
         return 200;
     }
 
-    json body;
-    body["currentScene"] = "main_full";
-    body["scenes"] = json::array();
+    if (!ctx || !ctx->scenes) {
+        resp_error(conn, 500, "scene_manager not available");
+        return 500;
+    }
 
-    send_json_response(conn, 200, body);
+    resp_json(conn, ctx->scenes->list_json());
     return 200;
 }
 
 // POST /api/scene/switch
 static int handle_scene_switch(struct mg_connection *conn, void *cbdata) {
-    (void)cbdata;
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
     const struct mg_request_info *ri = mg_get_request_info(conn);
 
     if (strcmp(ri->request_method, "OPTIONS") == 0) {
         send_cors_preflight(conn);
         return 200;
+    }
+
+    if (!ctx || !ctx->scenes) {
+        resp_error(conn, 500, "scene_manager not available");
+        return 500;
     }
 
     std::string req_body = read_request_body(conn);
-    json resp;
-    resp["success"] = true;
-    resp["switchedTo"] = "main_full";
-
-    if (!req_body.empty()) {
-        try {
-            json req = json::parse(req_body);
-            if (req.contains("sceneName")) {
-                resp["switchedTo"] = req["sceneName"];
-            }
-        } catch (...) {
-            // 忽略解析错误，使用默认值
-        }
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
     }
 
-    send_json_response(conn, 200, resp);
-    return 200;
+    try {
+        json req = json::parse(req_body);
+        std::string scene_name = req.value("sceneName", "");
+        if (scene_name.empty()) {
+            resp_error(conn, 400, "missing sceneName");
+            return 400;
+        }
+        if (ctx->scenes->switch_to(scene_name)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to switch scene");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
 }
 
-// GET /api/source/list
-static int handle_source_list(struct mg_connection *conn, void *cbdata) {
-    (void)cbdata;
+// POST /api/scene/create
+static int handle_scene_create(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
     const struct mg_request_info *ri = mg_get_request_info(conn);
 
     if (strcmp(ri->request_method, "OPTIONS") == 0) {
@@ -314,16 +358,296 @@ static int handle_source_list(struct mg_connection *conn, void *cbdata) {
         return 200;
     }
 
-    json body;
-    body["sources"] = json::array();
+    if (!ctx || !ctx->scenes) {
+        resp_error(conn, 500, "scene_manager not available");
+        return 500;
+    }
 
-    send_json_response(conn, 200, body);
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string scene_name = req.value("sceneName", "");
+        std::string layout_type = req.value("layoutType", "fullscreen");
+        std::vector<std::string> source_names;
+        if (req.contains("sourceNames") && req["sourceNames"].is_array()) {
+            for (const auto &s : req["sourceNames"]) {
+                source_names.push_back(s.get<std::string>());
+            }
+        }
+        if (scene_name.empty()) {
+            resp_error(conn, 400, "missing sceneName");
+            return 400;
+        }
+        if (ctx->scenes->create_scene(scene_name, layout_type, source_names)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to create scene");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
+}
+
+// POST /api/scene/delete
+static int handle_scene_delete(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->scenes) {
+        resp_error(conn, 500, "scene_manager not available");
+        return 500;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string scene_name = req.value("sceneName", "");
+        if (scene_name.empty()) {
+            resp_error(conn, 400, "missing sceneName");
+            return 400;
+        }
+        if (ctx->scenes->delete_scene(scene_name)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to delete scene");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
+}
+
+// POST /api/scene/add-source
+static int handle_scene_add_source(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->scenes) {
+        resp_error(conn, 500, "scene_manager not available");
+        return 500;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string scene_name = req.value("sceneName", "");
+        std::string source_name = req.value("sourceName", "");
+        if (scene_name.empty() || source_name.empty()) {
+            resp_error(conn, 400, "missing sceneName or sourceName");
+            return 400;
+        }
+        if (ctx->scenes->add_source(scene_name, source_name)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to add source to scene");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
+}
+
+// POST /api/scene/remove-source
+static int handle_scene_remove_source(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->scenes) {
+        resp_error(conn, 500, "scene_manager not available");
+        return 500;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string scene_name = req.value("sceneName", "");
+        std::string source_name = req.value("sourceName", "");
+        if (scene_name.empty() || source_name.empty()) {
+            resp_error(conn, 400, "missing sceneName or sourceName");
+            return 400;
+        }
+        if (ctx->scenes->remove_source(scene_name, source_name)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to remove source from scene");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
+}
+
+// ============ Source 路由 ============
+
+// GET /api/source/list
+static int handle_source_list(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->sources) {
+        resp_error(conn, 500, "source_manager not available");
+        return 500;
+    }
+
+    resp_json(conn, ctx->sources->list_json());
     return 200;
+}
+
+// POST /api/source/discover
+static int handle_source_discover(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->sources) {
+        resp_error(conn, 500, "source_manager not available");
+        return 500;
+    }
+
+    if (ctx->sources->discover()) {
+        resp_ok(conn);
+    } else {
+        resp_error(conn, 500, "failed to discover sources");
+    }
+    return 200;
+}
+
+// POST /api/source/rename
+static int handle_source_rename(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->sources) {
+        resp_error(conn, 500, "source_manager not available");
+        return 500;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string obs_name = req.value("sourceName", "");
+        std::string alias = req.value("alias", "");
+        if (obs_name.empty()) {
+            resp_error(conn, 400, "missing sourceName");
+            return 400;
+        }
+        if (ctx->sources->rename(obs_name, alias)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to rename source");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
+}
+
+// POST /api/source/configure
+static int handle_source_configure(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->sources) {
+        resp_error(conn, 500, "source_manager not available");
+        return 500;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string obs_name = req.value("sourceName", "");
+        std::string alias = req.value("alias", "");
+        std::string color_tag = req.value("colorTag", "#ffffff");
+        int sort_order = req.value("sortOrder", 0);
+        if (obs_name.empty()) {
+            resp_error(conn, 400, "missing sourceName");
+            return 400;
+        }
+        if (ctx->sources->configure(obs_name, alias, color_tag, sort_order)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to configure source");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
 }
 
 // POST /api/source/show
 static int handle_source_show(struct mg_connection *conn, void *cbdata) {
-    (void)cbdata;
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
     const struct mg_request_info *ri = mg_get_request_info(conn);
 
     if (strcmp(ri->request_method, "OPTIONS") == 0) {
@@ -331,28 +655,39 @@ static int handle_source_show(struct mg_connection *conn, void *cbdata) {
         return 200;
     }
 
-    std::string req_body = read_request_body(conn);
-    json resp;
-    resp["success"] = true;
-
-    if (!req_body.empty()) {
-        try {
-            json req = json::parse(req_body);
-            if (req.contains("sourceName")) {
-                resp["sourceName"] = req["sourceName"];
-            }
-        } catch (...) {
-            // 忽略错误
-        }
+    if (!ctx || !ctx->sources) {
+        resp_error(conn, 500, "source_manager not available");
+        return 500;
     }
 
-    send_json_response(conn, 200, resp);
-    return 200;
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string obs_name = req.value("sourceName", "");
+        if (obs_name.empty()) {
+            resp_error(conn, 400, "missing sourceName");
+            return 400;
+        }
+        if (ctx->sources->show(obs_name)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to show source");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
 }
 
 // POST /api/source/hide
 static int handle_source_hide(struct mg_connection *conn, void *cbdata) {
-    (void)cbdata;
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
     const struct mg_request_info *ri = mg_get_request_info(conn);
 
     if (strcmp(ri->request_method, "OPTIONS") == 0) {
@@ -360,24 +695,37 @@ static int handle_source_hide(struct mg_connection *conn, void *cbdata) {
         return 200;
     }
 
-    std::string req_body = read_request_body(conn);
-    json resp;
-    resp["success"] = true;
-
-    if (!req_body.empty()) {
-        try {
-            json req = json::parse(req_body);
-            if (req.contains("sourceName")) {
-                resp["sourceName"] = req["sourceName"];
-            }
-        } catch (...) {
-            // 忽略错误
-        }
+    if (!ctx || !ctx->sources) {
+        resp_error(conn, 500, "source_manager not available");
+        return 500;
     }
 
-    send_json_response(conn, 200, resp);
-    return 200;
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string obs_name = req.value("sourceName", "");
+        if (obs_name.empty()) {
+            resp_error(conn, 400, "missing sourceName");
+            return 400;
+        }
+        if (ctx->sources->hide(obs_name)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to hide source");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
 }
+
+// ============ Marker 路由 ============
 
 // POST /api/marker/add
 static int handle_marker_add(struct mg_connection *conn, void *cbdata) {
@@ -430,6 +778,8 @@ static int handle_marker_list(struct mg_connection *conn, void *cbdata) {
     send_json_response(conn, 200, body);
     return 200;
 }
+
+// ============ Preset 路由 ============
 
 // GET /api/preset/list
 static int handle_preset_list(struct mg_connection *conn, void *cbdata) {
@@ -699,26 +1049,48 @@ bool ws_start(PluginContext *ctx) {
                            handle_rec_start, ctx);
     mg_set_request_handler(ctx->web_server->ctx, "/api/rec/stop",
                            handle_rec_stop, ctx);
+
+    // Scene 路由
     mg_set_request_handler(ctx->web_server->ctx, "/api/scene/list",
                            handle_scene_list, ctx);
     mg_set_request_handler(ctx->web_server->ctx, "/api/scene/switch",
                            handle_scene_switch, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/scene/create",
+                           handle_scene_create, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/scene/delete",
+                           handle_scene_delete, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/scene/add-source",
+                           handle_scene_add_source, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/scene/remove-source",
+                           handle_scene_remove_source, ctx);
+
+    // Source 路由
     mg_set_request_handler(ctx->web_server->ctx, "/api/source/list",
                            handle_source_list, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/source/discover",
+                           handle_source_discover, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/source/rename",
+                           handle_source_rename, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/source/configure",
+                           handle_source_configure, ctx);
     mg_set_request_handler(ctx->web_server->ctx, "/api/source/show",
                            handle_source_show, ctx);
     mg_set_request_handler(ctx->web_server->ctx, "/api/source/hide",
                            handle_source_hide, ctx);
+
+    // Marker 路由
     mg_set_request_handler(ctx->web_server->ctx, "/api/marker/add",
                            handle_marker_add, ctx);
     mg_set_request_handler(ctx->web_server->ctx, "/api/marker/list",
                            handle_marker_list, ctx);
+
+    // Preset 路由
     mg_set_request_handler(ctx->web_server->ctx, "/api/preset/list",
                            handle_preset_list, ctx);
     mg_set_request_handler(ctx->web_server->ctx, "/api/preset/save",
                            handle_preset_save, ctx);
 
-    blog_info("Registered %d REST routes", 13);
+    blog_info("Registered %d REST routes", 20);
 
     // 注册 WebSocket
     mg_set_websocket_handler(ctx->web_server->ctx, "/ws",

@@ -43,6 +43,8 @@ export type RecordingState = 'idle' | 'recording' | 'paused';
 export interface SceneListItem {
   name: string;
   sources: string[];
+  layoutType: string;
+  isBuiltin: boolean;
 }
 
 export interface SceneListResponse {
@@ -52,18 +54,32 @@ export interface SceneListResponse {
 
 export interface SceneSwitchRequest {
   sceneName: string;
-  transitionId?: string;     // 可选，默认 cut
+  transitionId?: string;
+}
+
+export interface SceneCreateRequest {
+  sceneName: string;
+  layoutType: string;
+  sourceNames: string[];
 }
 
 // ============ 输入源 ============
+export type SourceCategory = 'camera' | 'desktop' | 'window' | 'browser' | 'media' | 'audio' | 'ndi' | 'unknown';
+
 export interface SourceInfo {
   id: string;
-  name: string;
+  obsName: string;
+  alias: string;
   type: string;
+  category: SourceCategory;
   active: boolean;
+  showing: boolean;
   resolution: { width: number; height: number };
   fps: number;
-  audioLevel: number;        // dB
+  audioLevel: number;
+  muted: boolean;
+  colorTag: string;
+  sortOrder: number;
 }
 
 export interface SourceListResponse {
@@ -71,12 +87,19 @@ export interface SourceListResponse {
 }
 
 export interface SourceShowHideRequest {
+  obsName: string;
+}
+
+export interface SourceRenameRequest {
   sourceName: string;
+  alias: string;
 }
 
 export interface SourceConfigureRequest {
-  sourceName: string;
-  properties: Record<string, unknown>;
+  obsName: string;
+  alias?: string;
+  colorTag?: string;
+  sortOrder?: number;
 }
 
 // ============ 标记 ============

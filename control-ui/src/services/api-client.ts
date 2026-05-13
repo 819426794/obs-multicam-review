@@ -83,10 +83,26 @@ export function switchScene(body: T.SceneSwitchRequest) {
   return request<void>('POST', '/scene/switch', body);
 }
 
+export function createScene(body: T.SceneCreateRequest) {
+  return request<T.SceneListItem>('POST', '/scene/create', body);
+}
+
+export function deleteScene(sceneName: string) {
+  return request<void>('DELETE', `/scene/${encodeURIComponent(sceneName)}`);
+}
+
 // ============ 输入源 ============
 
 export function fetchSourceList() {
   return request<T.SourceListResponse>('GET', '/source/list');
+}
+
+export function discoverSources() {
+  return request<T.SourceListResponse>('POST', '/source/discover');
+}
+
+export function renameSource(body: T.SourceRenameRequest) {
+  return request<void>('POST', '/source/rename', body);
 }
 
 export function showSource(body: T.SourceShowHideRequest) {
@@ -95,6 +111,10 @@ export function showSource(body: T.SourceShowHideRequest) {
 
 export function hideSource(body: T.SourceShowHideRequest) {
   return request<void>('POST', '/source/hide', body);
+}
+
+export function configureSource(body: T.SourceConfigureRequest) {
+  return request<void>('POST', '/source/configure', body);
 }
 
 // ============ 标记 ============

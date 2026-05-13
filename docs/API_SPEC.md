@@ -147,29 +147,64 @@
 
 ### 3.2 场景控制
 
-#### `POST /api/scene/switch`
-切换场景
-
-```json
-{
-  "sceneName": "main_pip",
-  "transitionId": "fade"      // 可选，默认 cut
-}
-```
-
 #### `GET /api/scene/list`
-获取场景列表
+获取场景列表（含布局信息）
 
 **响应 200**：
 ```json
 {
   "currentScene": "main_full",
   "scenes": [
-    { "name": "main_full", "sources": ["cam_main"] },
-    { "name": "main_pip", "sources": ["cam_main", "cam_top"] },
-    { "name": "split_4", "sources": ["cam_main", "cam_top", "cam_side", "cam_detail"] }
+    {
+      "name": "main_full",
+      "sources": ["cam_main"],
+      "layoutType": "fullscreen",
+      "isBuiltin": true
+    },
+    {
+      "name": "main_pip",
+      "sources": ["cam_main", "cam_top"],
+      "layoutType": "pip",
+      "isBuiltin": true
+    },
+    {
+      "name": "split_4",
+      "sources": ["cam_main", "cam_top", "cam_side", "cam_detail"],
+      "layoutType": "quad",
+      "isBuiltin": false
+    }
   ]
 }
+```
+
+#### `POST /api/scene/switch`
+切换场景
+```json
+{ "sceneName": "main_pip", "transitionId": "fade" }
+```
+
+#### `POST /api/scene/create`
+从模板创建场景
+```json
+{ "sceneName": "评测分屏", "layoutType": "split", "sourceNames": ["cam_main", "cam_product"] }
+```
+
+#### `POST /api/scene/delete`
+删除自定义场景
+```json
+{ "sceneName": "评测分屏" }
+```
+
+#### `POST /api/scene/add-source`
+向场景添加源
+```json
+{ "sceneName": "main_pip", "obsName": "cam_overhead" }
+```
+
+#### `POST /api/scene/remove-source`
+从场景移除源
+```json
+{ "sceneName": "main_pip", "obsName": "cam_top" }
 ```
 
 ---
@@ -177,50 +212,60 @@
 ### 3.3 输入源控制
 
 #### `GET /api/source/list`
-获取所有输入源
+获取所有输入源（枚举 OBS 所有源 + 插件管理的配置）
 
 **响应 200**：
 ```json
 {
   "sources": [
     {
-      "id": "cam_main",
-      "name": "主镜头",
+      "id": "src_001",
+      "obsName": "HDMI Capture (主镜头)",
+      "alias": "主镜头",
       "type": "dshow_input",
+      "category": "camera",
       "active": true,
+      "showing": true,
       "resolution": { "width": 1920, "height": 1080 },
       "fps": 60,
-      "audioLevel": -6.5
+      "audioLevel": -6.5,
+      "muted": false,
+      "colorTag": "#ef4444",
+      "sortOrder": 0
     }
   ]
 }
 ```
 
-#### `POST /api/source/show`
-显示输入源
+#### `POST /api/source/discover`
+触发源发现（扫描 OBS 中已配置的源并同步到插件数据库）
 
+#### `POST /api/source/rename`
+重命名源别名
 ```json
-{ "sourceName": "cam_top" }
+{ "sourceName": "cam_top", "alias": "顶视角镜头" }
+```
+
+#### `POST /api/source/show`
+在场景中显示输入源
+```json
+{ "obsName": "HDMI Capture (主镜头)" }
 ```
 
 #### `POST /api/source/hide`
-隐藏输入源
-
+在场景中隐藏输入源
 ```json
-{ "sourceName": "cam_top" }
+{ "obsName": "HDMI Capture (主镜头)" }
 ```
 
 #### `POST /api/source/configure`
-配置输入源属性
-
+更新源配置（别名/颜色标签/排序）
 ```json
 {
-  "sourceName": "cam_main",
-  "properties": {
-    "resolution": "1920x1080",
-    "fps": 60,
-    "videoFormat": "MJPG"
-  }
+  "obsName": "HDMI Capture (主镜头)",
+  "alias": "主镜头",
+  "colorTag": "#ef4444",
+  "sortOrder": 0
 }
 ```
 

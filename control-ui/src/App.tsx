@@ -7,10 +7,13 @@ import { useApi } from './hooks/useApi';
 import * as api from './services/api-client';
 import ProjectsPage from './pages/ProjectsPage';
 import ProductsPage from './pages/ProductsPage';
+import SourcesPage from './pages/SourcesPage';
+import ScenesPage from './pages/ScenesPage';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: '概览' },
   { to: '/sources', icon: Camera, label: '输入源' },
+  { to: '/scenes', icon: Clapperboard, label: '场景' },
   { to: '/audio', icon: Mic, label: '音频控制台' },
   { to: '/projects', icon: FolderKanban, label: '项目管理' },
   { to: '/overlay', icon: Clapperboard, label: '叠加层' },
@@ -54,7 +57,8 @@ function App() {
           <main className="flex-1 overflow-auto p-4">
             <Routes>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/sources" element={<Placeholder title="输入源管理" />} />
+              <Route path="/sources" element={<SourcesPage />} />
+              <Route path="/scenes" element={<ScenesPage />} />
               <Route path="/audio" element={<Placeholder title="音频控制台" />} />
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/products/:projectId" element={<ProductsPage />} />
