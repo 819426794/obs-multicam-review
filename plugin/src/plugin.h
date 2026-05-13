@@ -18,7 +18,7 @@ struct WebServer;
 struct Recorder;
 struct TimecodeGen;
 struct SceneManager;
-struct Database;
+namespace multicam { class Database; }
 struct AudioConsole;
 struct PresetManager;
 
@@ -29,7 +29,7 @@ struct PluginContext {
     Recorder      *recorder;
     TimecodeGen   *timecode;
     SceneManager  *scenes;
-    Database      *database;
+    multicam::Database *database;
     AudioConsole  *audio_console;
     PresetManager *presets;
 

@@ -1,4 +1,6 @@
 #include "plugin.h"
+#include "database/database.h"
+#include "webserver/webserver.h"
 #include <obs-module.h>
 #include <obs-frontend-api.h>
 #include <util/platform.h>
@@ -52,9 +54,32 @@ bool obs_module_load(void) {
     // 注册前端事件
     obs_frontend_add_event_callback(on_event, nullptr);
 
-    // TODO: 初始化各模块
-    // - Web 服务器 (civetweb)
-    // - 数据库 (SQLite)
+    // 初始化 Web 服务器 (civetweb)
+    if (!ws_start(g_ctx)) {
+        blog_error("Failed to start web server");
+        obs_frontend_remove_event_callback(on_event, nullptr);
+        bfree(g_ctx);
+        g_ctx = nullptr;
+        return false;
+    }
+
+    // ---- 初始化数据库 ----
+    g_ctx->database = new multicam::Database();
+    char db_path[512];
+    if (os_get_config_path(db_path, sizeof(db_path),
+        "obs-studio/plugin_data/obs-multicam-review/multicam.db") > 0) {
+        if (g_ctx->database->open(db_path) && g_ctx->database->init_schema()) {
+            blog_info("Database initialized: %s", db_path);
+        } else {
+            blog_error("Failed to initialize database");
+            delete g_ctx->database;
+            g_ctx->database = nullptr;
+        }
+    } else {
+        blog_error("Failed to get database path");
+    }
+
+    // TODO: 初始化其他模块
     // - 时间码生成器
     // - 录制引擎
     // - 场景管理器
@@ -69,7 +94,20 @@ void obs_module_unload(void) {
     blog_info("Unloading obs-multicam-review");
 
     if (g_ctx) {
-        // TODO: 销毁各模块
+        // 销毁数据库
+        if (g_ctx->database) {
+            g_ctx->database->close();
+            delete g_ctx->database;
+            g_ctx->database = nullptr;
+        }
+
+        // 停止 Web 服务器
+        ws_stop(g_ctx->web_server);
+        if (g_ctx->web_server) {
+            delete g_ctx->web_server;
+            g_ctx->web_server = nullptr;
+        }
+
         obs_frontend_remove_event_callback(on_event, nullptr);
         bfree(g_ctx);
         g_ctx = nullptr;
