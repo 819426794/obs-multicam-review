@@ -461,6 +461,95 @@ interface SystemStatus {
   memoryUsageMB: number;
 }
 
+// ============ 项目 ============
+interface Project {
+  id: string;
+  name: string;
+  status: 'draft' | 'recording' | 'completed';
+  fps: number;
+  resolutionX: number;
+  resolutionY: number;
+  brandMaskEnabled: boolean;
+  brandMaskRule: string;
+  brandMaskChar: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ProjectListResponse { projects: Project[]; }
+
+// ============ 产品 ============
+interface Product {
+  id: string;
+  projectId: string;
+  sortOrder: number;
+  brand: string;
+  model: string;
+  price: string;
+  priceValue: number;
+  color: string;
+  colorHex: string;
+  spec: string;
+  specJson: string;
+  imagePath: string;
+  notes: string;
+  createdAt: string;
+}
+
+interface ProductListResponse { products: Product[]; }
+interface ProductReorderRequest { projectId: string; ids: string[]; }
+
+// ============ 评分维度 ============
+interface DimensionTemplate {
+  id: string;
+  name: string;
+  isBuiltin: boolean;
+  createdAt: string;
+}
+
+interface DimensionItem {
+  id?: string;
+  dimKey: string;
+  label: string;
+  weight: number;
+  maxScore: number;
+  sortOrder: number;
+}
+
+// ============ 评分会话 ============
+interface ScoringSession {
+  id: string;
+  projectId: string;
+  recordingId?: string;
+  judgeName: string;
+  sessionName: string;
+  startedAt: string;
+  completedAt?: string;
+  status: 'in_progress' | 'completed';
+}
+
+interface ScoreEntry {
+  id: string;
+  sessionId: string;
+  productId: string;
+  dimKey: string;
+  score: number;
+  maxScore: number;
+  note: string;
+  createdAt: string;
+}
+
+interface LeaderboardEntry {
+  productId: string;
+  brand: string;
+  model: string;
+  totalScore: number;
+  maxPossible: number;
+  dimensions: Array<{ dimKey: string; label: string; score: number; maxScore: number }>;
+}
+
+interface LeaderboardResponse { leaderboard: LeaderboardEntry[]; }
+
 // ============ WebSocket 事件 ============
 type WsEventAction =
   | 'recording.started'
@@ -494,6 +583,170 @@ type WsCommandAction =
 
 ---
 
+### 3.7 项目管理
+
+#### `GET /api/projects`
+获取项目列表
+
+**响应 200**：
+```json
+{
+  "projects": [
+    { "id": "uuid", "name": "2026春季手机横评", "status": "draft", "fps": 60,
+      "resolutionX": 1920, "resolutionY": 1080, "brandMaskEnabled": true,
+      "createdAt": "2026-05-13T12:00:00.000+08:00" }
+  ]
+}
+```
+
+#### `POST /api/projects`
+创建项目
+
+```json
+{ "name": "新评测项目", "fps": 60, "resolutionX": 1920, "resolutionY": 1080 }
+```
+
+**响应 200**：返回完整项目对象
+
+#### `PUT /api/projects/{id}`
+更新项目
+
+#### `DELETE /api/projects/{id}`
+删除项目
+
+---
+
+### 3.8 产品管理
+
+#### `GET /api/products?projectId=uuid`
+获取产品列表（按 sortOrder 排序）
+
+**响应 200**：
+```json
+{
+  "products": [
+    {
+      "id": "uuid", "projectId": "uuid", "sortOrder": 0,
+      "brand": "华为", "model": "Mate 70 Pro",
+      "price": "¥6,999", "priceValue": 6999,
+      "color": "雅丹黑", "colorHex": "#1a1a2e",
+      "spec": "芯片: 9000S",
+      "specJson": "[{\"key\":\"芯片\",\"val\":\"9000S\"}]",
+      "imagePath": "C:\\Products\\mate70.png",
+      "notes": "", "createdAt": "2026-05-13T12:00:00.000+08:00"
+    }
+  ]
+}
+```
+
+#### `POST /api/products`
+创建产品
+
+```json
+{
+  "projectId": "uuid",
+  "brand": "华为", "model": "Mate 70 Pro",
+  "price": "¥6,999", "priceValue": 6999,
+  "color": "雅丹黑", "colorHex": "#1a1a2e",
+  "specJson": "[{\"key\":\"芯片\",\"val\":\"9000S\"}]",
+  "imagePath": "", "notes": ""
+}
+```
+
+#### `PUT /api/products/{id}`
+更新产品
+
+#### `DELETE /api/products/{id}`
+删除产品
+
+#### `PUT /api/products/reorder`
+产品排序
+
+```json
+{ "projectId": "uuid", "ids": ["id3", "id1", "id2"] }
+```
+
+---
+
+### 3.9 评分维度
+
+#### `GET /api/dimensions/templates`
+获取维度模板列表
+
+#### `POST /api/dimensions/templates`
+创建维度模板
+
+```json
+{ "name": "手机评测模板", "items": [
+  { "dimKey": "display", "label": "屏幕", "weight": 1.0, "maxScore": 10 },
+  { "dimKey": "camera", "label": "相机", "weight": 1.2, "maxScore": 10 }
+]}
+```
+
+#### `DELETE /api/dimensions/templates/{id}`
+删除模板
+
+#### `PUT /api/products/{productId}/dimension-template`
+绑定产品的维度模板
+
+```json
+{ "templateId": "uuid" }
+```
+
+#### `GET /api/products/{productId}/dimension-template`
+获取产品绑定的维度模板
+
+---
+
+### 3.10 评分会话
+
+#### `POST /api/scoring/sessions`
+创建评分会话
+
+```json
+{ "projectId": "uuid", "judgeName": "评委1", "sessionName": "第一轮打分" }
+```
+
+#### `GET /api/scoring/sessions/{id}`
+获取评分会话详情
+
+#### `POST /api/scoring/sessions/{id}/complete`
+完成评分会话
+
+#### `POST /api/scoring/scores`
+提交单条评分
+
+```json
+{
+  "sessionId": "uuid", "productId": "uuid",
+  "dimKey": "display", "score": 8.5, "note": "色彩准确"
+}
+```
+
+#### `GET /api/scoring/scores?sessionId=uuid&productId=uuid`
+获取某产品在某会话中的所有评分
+
+#### `GET /api/scoring/leaderboard?sessionId=uuid`
+获取排行榜（按总分降序）
+
+**响应 200**：
+```json
+{
+  "leaderboard": [
+    {
+      "productId": "uuid", "brand": "华为", "model": "Mate 70 Pro",
+      "totalScore": 42.5, "maxPossible": 50,
+      "dimensions": [
+        { "dimKey": "display", "label": "屏幕", "score": 8.5, "maxScore": 10 },
+        { "dimKey": "camera", "label": "相机", "score": 9.0, "maxScore": 10 }
+      ]
+    }
+  ]
+}
+```
+
+---
+
 ## 6. 错误码
 
 | 错误码 | HTTP | 含义 |
@@ -507,6 +760,11 @@ type WsCommandAction =
 | `ERR_PRESET_NAME_CONFLICT` | 409 | 预设名称冲突 |
 | `ERR_INTERNAL` | 500 | 内部错误 |
 | `ERR_INVALID_PARAMS` | 400 | 参数无效 |
+| `ERR_PROJECT_NOT_FOUND` | 400 | 项目不存在 |
+| `ERR_PRODUCT_NOT_FOUND` | 400 | 产品不存在 |
+| `ERR_TEMPLATE_NOT_FOUND` | 400 | 维度模板不存在 |
+| `ERR_SESSION_NOT_FOUND` | 400 | 评分会话不存在 |
+| `ERR_SESSION_COMPLETED` | 409 | 评分会话已结束 |
 
 ---
 
