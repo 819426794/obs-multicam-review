@@ -305,6 +305,41 @@ export interface LeaderboardResponse {
   leaderboard: LeaderboardEntry[];
 }
 
+// ============ 音频 ============
+export interface AudioChannel {
+  sourceName: string;
+  alias: string;
+  volume: number;
+  db: number;
+  muted: boolean;
+  solo: boolean;
+  pan: number;
+  vuLevel: number;
+  vuPercent: number;
+  signalPresent: boolean;
+}
+
+// ============ 录制状态 ============
+export interface RecStatus {
+  state: 'idle' | 'recording' | 'paused';
+  recordingId: string;
+  durationSec: number;
+  totalBytes: number;
+  droppedFrames: number;
+  diskFreeBytes: number;
+  files: Array<{
+    sourceName: string;
+    path: string;
+    sizeBytes: number;
+  }>;
+}
+
+// ============ 预设列表项 ============
+export interface PresetListItem {
+  name: string;
+  createdAt: string;
+}
+
 // ============ 预设 ============
 export interface PresetSaveRequest {
   presetName: string;

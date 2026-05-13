@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, Camera, Mic, Star, Clapperboard,
-  Monitor, List, Clock, FolderKanban,
+  LayoutDashboard, Camera, Mic, Settings, Clapperboard,
+  Monitor, List, Clock, FolderKanban, Play,
 } from 'lucide-react';
 import { useApi } from './hooks/useApi';
 import * as api from './services/api-client';
@@ -9,16 +9,22 @@ import ProjectsPage from './pages/ProjectsPage';
 import ProductsPage from './pages/ProductsPage';
 import SourcesPage from './pages/SourcesPage';
 import ScenesPage from './pages/ScenesPage';
+import AudioConsolePage from './pages/AudioConsolePage';
+import RecordingPage from './pages/RecordingPage';
+import OverlayPage from './pages/OverlayPage';
+import PresetsPage from './pages/PresetsPage';
+import SettingsPage from './pages/SettingsPage';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: '概览' },
   { to: '/sources', icon: Camera, label: '输入源' },
   { to: '/scenes', icon: Clapperboard, label: '场景' },
   { to: '/audio', icon: Mic, label: '音频控制台' },
+  { to: '/recording', icon: Play, label: '录制' },
   { to: '/projects', icon: FolderKanban, label: '项目管理' },
-  { to: '/overlay', icon: Clapperboard, label: '叠加层' },
+  { to: '/overlay', icon: Monitor, label: '叠加层' },
   { to: '/presets', icon: List, label: '预设' },
-  { to: '/settings', icon: Star, label: '评分' },
+  { to: '/settings', icon: Settings, label: '设置' },
 ];
 
 function App() {
@@ -59,12 +65,13 @@ function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/sources" element={<SourcesPage />} />
               <Route path="/scenes" element={<ScenesPage />} />
-              <Route path="/audio" element={<Placeholder title="音频控制台" />} />
+              <Route path="/audio" element={<AudioConsolePage />} />
+              <Route path="/recording" element={<RecordingPage />} />
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/products/:projectId" element={<ProductsPage />} />
-              <Route path="/overlay" element={<Placeholder title="叠加层编辑" />} />
-              <Route path="/presets" element={<Placeholder title="预设管理" />} />
-              <Route path="/settings" element={<Placeholder title="评分系统" />} />
+              <Route path="/overlay" element={<OverlayPage />} />
+              <Route path="/presets" element={<PresetsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
             </Routes>
           </main>
         </div>
@@ -166,18 +173,6 @@ function Dashboard() {
         ) : (
           <p className="text-slate-500 text-sm">无数据</p>
         )}
-      </div>
-    </div>
-  );
-}
-
-// ============ 占位页面 ============
-function Placeholder({ title }: { title: string }) {
-  return (
-    <div className="flex items-center justify-center h-full">
-      <div className="text-center text-slate-500">
-        <h2 className="text-xl font-bold mb-2">{title}</h2>
-        <p className="text-sm">模块开发中...</p>
       </div>
     </div>
   );

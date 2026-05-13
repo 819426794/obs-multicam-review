@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OBS Overlay — Product Info</title>
+  <style>
+    :root {
+      --pi-font-size-name: 32px;
+      --pi-font-size-price: 28px;
+      --pi-font-size-specs: 16px;
+      --pi-card-width: 520px;
+      --pi-card-bg-opacity: 0.92;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: transparent;
+      font-family: 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    /* ── 卡片容器（居中底部） ── */
+    .card-wrapper {
+      position: fixed;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 100;
+      pointer-events: none;
+    }
+
+    /* ── 产品信息卡 ── */
+    .product-info-card {
+      width: var(--pi-card-width);
+      background: linear-gradient(135deg,
+        rgba(10, 20, 40, var(--pi-card-bg-opacity)),
+        rgba(20, 30, 60, var(--pi-card-bg-opacity)));
+      border: 2px solid rgba(0, 255, 204, 0.4);
+      border-radius: 14px;
+      padding: 22px 28px;
+      box-shadow:
+        0 8px 40px rgba(0, 0, 0, 0.55),
+        0 0 30px rgba(0, 255, 204, 0.08),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(6px);
+      transition:
+        opacity 0.35s ease,
+        transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── 隐藏/离开动画 ── */
+    .product-info-card.hiding {
+      opacity: 0;
+      transform: translateY(30px);
+      pointer-events: none;
+    }
+
+    /* ── 进入动画 ── */
+    .product-info-card.entering {
+      animation: slideUpIn 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    @keyframes slideUpIn {
+      0%   { opacity: 0; transform: translateY(40px) scale(0.95); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes slideDownOut {
+      0%   { opacity: 1; transform: translateY(0); }
+      100% { opacity: 0; transform: translateY(30px); }
+    }
+
+    /* ── 品牌 / 型号 ── */
+    .pi-brand {
+      font-size: 18px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.6);
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      margin-bottom: 2px;
+    }
+
+    .pi-name {
+      font-size: var(--pi-font-size-name);
+      font-weight: 800;
+      color: #ffffff;
+      margin-bottom: 6px;
+      line-height: 1.2;
+    }
+
+    /* ── 价格 ── */
+    .pi-price {
+      font-size: var(--pi-font-size-price);
+      font-weight: 800;
+      color: #ffcc00;
+      margin-bottom: 10px;
+      text-shadow: 0 0 10px rgba(255, 204, 0, 0.3);
+    }
+
+    /* ── 规格 ── */
+    .pi-specs {
+      font-size: var(--pi-font-size-specs);
+      color: #aabbcc;
+      line-height: 1.7;
+    }
+
+    .pi-specs .spec-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pi-specs .spec-tag {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      padding: 3px 10px;
+      font-size: 14px;
+      color: #b0c0d0;
+      margin-right: 6px;
+      margin-bottom: 4px;
+    }
+
+    /* ── 颜色条 ── */
+    .pi-color-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .pi-color-swatch {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      flex-shrink: 0;
+    }
+
+    .pi-color-label {
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    /* ── 产品序号指示器 ── */
+    .pi-index {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.3);
+      font-weight: 600;
+    }
+
+    /* ── 隐藏状态（无产品时） ── */
+    .product-info-card.hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card-wrapper" id="card-wrapper">
+  <div class="product-info-card hidden" id="product-card">
+    <span class="pi-index" id="pi-index"></span>
+    <div class="pi-brand" id="pi-brand"></div>
+    <div class="pi-name" id="pi-name"></div>
+    <div class="pi-price" id="pi-price"></div>
+    <div class="pi-specs" id="pi-specs"></div>
+    <div class="pi-color-bar" id="pi-color-bar" style="display:none;">
+      <div class="pi-color-swatch" id="pi-color-swatch"></div>
+      <span class="pi-color-label" id="pi-color-label"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    // ── URL 参数 ──
+    var params = new URLSearchParams(window.location.search);
+    var sizeName  = params.get('nameSize')  || '32';
+    var sizePrice = params.get('priceSize') || '28';
+    var sizeSpecs = params.get('specSize')  || '16';
+    var cardWidth = params.get('width')     || '520';
+    var bgOpacity = params.get('bg')        || '0.92';
+
+    var root = document.documentElement;
+    root.style.setProperty('--pi-font-size-name',  sizeName  + 'px');
+    root.style.setProperty('--pi-font-size-price', sizePrice + 'px');
+    root.style.setProperty('--pi-font-size-specs', sizeSpecs + 'px');
+    root.style.setProperty('--pi-card-width',      cardWidth + 'px');
+    root.style.setProperty('--pi-card-bg-opacity', bgOpacity);
+
+    // ── DOM ──
+    var card       = document.getElementById('product-card');
+    var piBrand    = document.getElementById('pi-brand');
+    var piName     = document.getElementById('pi-name');
+    var piPrice    = document.getElementById('pi-price');
+    var piSpecs    = document.getElementById('pi-specs');
+    var piIndex    = document.getElementById('pi-index');
+    var colorBar   = document.getElementById('pi-color-bar');
+    var colorSwatch = document.getElementById('pi-color-swatch');
+    var colorLabel = document.getElementById('pi-color-label');
+
+    // ── 当前产品 ID（用于判断是否同一产品） ──
+    var currentProductId = null;
+    var hideTimer = null;
+
+    // ── 解析规格 ──
+    function parseSpecs(specs) {
+      if (!specs) return '';
+
+      // 如果是 JSON 字符串，解析成标签
+      var parsed;
+      if (typeof specs === 'string') {
+        try {
+          parsed = JSON.parse(specs);
+        } catch (e) {
+          // 不是 JSON，当作纯文本显示
+          return '<span>' + specs + '</span>';
+        }
+      } else if (Array.isArray(specs)) {
+        parsed = specs;
+      } else if (typeof specs === 'object') {
+        parsed = Object.entries(specs).map(function (e) { return { key: e[0], val: e[1] }; });
+      } else {
+        return '';
+      }
+
+      if (Array.isArray(parsed)) {
+        return '<span class="spec-row">' +
+          parsed.map(function (s) {
+            var label = s.key || s.label || s.k || '';
+            var value = s.val  || s.value || s.v || '';
+            return '<span class="spec-tag">' + (label ? label + ': ' : '') + value + '</span>';
+          }).join('') +
+        '</span>';
+      }
+
+      return '';
+    }
+
+    // ── 显示产品 ──
+    function showProduct(product) {
+      if (!product) {
+        hideProduct();
+        return;
+      }
+
+      var pid = product.productId || product.id || product.productName || '';
+
+      // 同一产品，不重复动画
+      if (pid === currentProductId && !card.classList.contains('hidden') && !card.classList.contains('hiding')) {
+        return;
+      }
+
+      // 清除之前的隐藏定时器
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+
+      currentProductId = pid;
+
+      // 先隐藏当前卡片（淡出）
+      if (!card.classList.contains('hidden') && !card.classList.contains('hiding')) {
+        card.classList.add('hiding');
+
+        // 等淡出完成后再更新内容
+        setTimeout(function () {
+          updateContent(product);
+          showCard();
+        }, 350);
+      } else {
+        updateContent(product);
+        showCard();
+      }
+    }
+
+    function updateContent(product) {
+      // 品牌
+      piBrand.textContent = product.brand || '';
+      // 名称
+      piName.textContent = product.productName || product.model || product.name || '';
+      // 价格
+      piPrice.textContent = product.price || '';
+      // 规格
+      piSpecs.innerHTML = parseSpecs(product.specs || product.spec || product.specJson || product.specifications);
+
+      // 颜色
+      if (product.color || product.colorHex) {
+        colorBar.style.display = 'flex';
+        colorSwatch.style.backgroundColor = product.colorHex || '#888';
+        colorLabel.textContent = product.color || '';
+      } else {
+        colorBar.style.display = 'none';
+      }
+
+      // 序号
+      if (product.index != null || product.sortOrder != null) {
+        var idx = (product.index != null ? product.index : product.sortOrder) + 1;
+        piIndex.textContent = '#' + idx;
+      } else {
+        piIndex.textContent = '';
+      }
+    }
+
+    function showCard() {
+      card.classList.remove('hidden', 'hiding');
+      // 强制回流以重新触发动画
+      void card.offsetWidth;
+      card.classList.add('entering');
+      setTimeout(function () {
+        card.classList.remove('entering');
+      }, 400);
+    }
+
+    function hideProduct() {
+      if (card.classList.contains('hidden')) return;
+
+      card.classList.add('hiding');
+      hideTimer = setTimeout(function () {
+        card.classList.add('hidden');
+        card.classList.remove('hiding');
+        currentProductId = null;
+      }, 350);
+    }
+
+    // ── WebSocket ──
+    var ws;
+    var reconnectTimer;
+    var reconnectDelay = 1000;
+
+    function connect() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
+      try {
+        ws = new WebSocket('ws://localhost:9527/ws');
+      } catch (e) {
+        scheduleReconnect();
+        return;
+      }
+
+      ws.onopen = function () {
+        console.log('[ProductInfo] WebSocket connected');
+        reconnectDelay = 1000;
+
+        // 订阅产品展示事件
+        ws.send(JSON.stringify({ type: 'subscribe', event: 'product_display' }));
+      };
+
+      ws.onmessage = function (ev) {
+        var msg;
+        try { msg = JSON.parse(ev.data); } catch (e) { return; }
+
+        var action = msg.action || msg.type || '';
+
+        // ── 产品展示 (任务描述格式) ──
+        if (action === 'product_display' || msg.type === 'product_display_event') {
+          var product = msg.payload || msg;
+          if (product && Object.keys(product).length > 0) {
+            showProduct(product);
+          }
+        }
+
+        // ── 产品展示 (现有格式: product.show) ──
+        if (action === 'product.show') {
+          var payload = msg.payload || {};
+          showProduct({
+            brand:   payload.brand,
+            model:   payload.model,
+            productName: payload.model,
+            price:   payload.price,
+            specs:   payload.specs || payload.spec,
+            color:   payload.color,
+            colorHex: payload.colorHex
+          });
+        }
+
+        // ── 隐藏产品 ──
+        if (action === 'product.hide' || action === 'product_display_hide') {
+          hideProduct();
+        }
+
+        // ── 产品切换指示 ──
+        if (action === 'product.next' || action === 'product.prev') {
+          // 短暂的隐藏以配合切换
+          card.classList.add('hiding');
+          clearTimeout(hideTimer);
+          hideTimer = setTimeout(function () {
+            card.classList.add('hidden');
+            card.classList.remove('hiding');
+            currentProductId = null;
+          }, 250);
+        }
+      };
+
+      ws.onerror = function () {};
+      ws.onclose = function () {
+        console.log('[ProductInfo] WebSocket closed, reconnecting...');
+        scheduleReconnect();
+      };
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(function () {
+        reconnectTimer = null;
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+        connect();
+      }, reconnectDelay);
+    }
+
+    connect();
+  })();
+</script>
+</body>
+</html>

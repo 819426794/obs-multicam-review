@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OBS Overlay — Leaderboard</title>
+  <style>
+    :root {
+      --lb-font-size: 18px;
+      --lb-width: 480px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: transparent;
+      font-family: 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    /* ── 排行榜容器 ── */
+    .leaderboard {
+      position: fixed;
+      top: 50%;
+      right: 40px;
+      transform: translateY(-50%);
+      width: var(--lb-width);
+      background: linear-gradient(135deg, rgba(10, 20, 40, 0.92), rgba(20, 30, 60, 0.88));
+      border: 2px solid rgba(99, 102, 241, 0.5);
+      border-radius: 16px;
+      padding: 24px 20px 20px;
+      box-shadow:
+        0 8px 40px rgba(0, 0, 0, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(6px);
+    }
+
+    /* ── 标题 ── */
+    .leaderboard-header {
+      text-align: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(99, 102, 241, 0.3);
+    }
+
+    .leaderboard-header h2 {
+      font-size: 22px;
+      font-weight: 800;
+      color: #c4b5fd;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      text-shadow: 0 0 12px rgba(139, 92, 246, 0.4);
+    }
+
+    .leaderboard-header .subtitle {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.45);
+      margin-top: 4px;
+    }
+
+    /* ── 排名列表 ── */
+    .rank-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    /* ── 单行 ── */
+    .rank-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      transition:
+        transform 0.3s ease,
+        background 0.3s ease,
+        opacity 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .rank-row::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 8px;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      pointer-events: none;
+    }
+
+    /* ── 排名徽章 ── */
+    .rank-badge {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 800;
+      color: #aaa;
+      background: rgba(255, 255, 255, 0.08);
+      flex-shrink: 0;
+      transition: all 0.3s ease;
+    }
+
+    /* 🥇🥈🥉 TOP 3 */
+    .rank-row.rank-1 { background: rgba(255, 215, 0, 0.1); }
+    .rank-row.rank-1::before { background: linear-gradient(135deg, rgba(255,215,0,0.08), transparent); opacity: 1; }
+    .rank-row.rank-1 .rank-badge {
+      background: linear-gradient(135deg, #ffd700, #ffaa00);
+      color: #1a1a2e;
+      box-shadow: 0 0 16px rgba(255, 215, 0, 0.5);
+      font-size: 20px;
+    }
+
+    .rank-row.rank-2 { background: rgba(192, 192, 192, 0.08); }
+    .rank-row.rank-2::before { background: linear-gradient(135deg, rgba(192,192,192,0.06), transparent); opacity: 1; }
+    .rank-row.rank-2 .rank-badge {
+      background: linear-gradient(135deg, #c0c0c0, #a0a0a0);
+      color: #1a1a2e;
+      box-shadow: 0 0 12px rgba(192, 192, 192, 0.4);
+    }
+
+    .rank-row.rank-3 { background: rgba(205, 127, 50, 0.08); }
+    .rank-row.rank-3::before { background: linear-gradient(135deg, rgba(205,127,50,0.06), transparent); opacity: 1; }
+    .rank-row.rank-3 .rank-badge {
+      background: linear-gradient(135deg, #cd7f32, #a0522d);
+      color: #fff;
+      box-shadow: 0 0 12px rgba(205, 127, 50, 0.4);
+    }
+
+    /* ── 产品名 ── */
+    .rank-name {
+      flex: 1;
+      font-size: var(--lb-font-size);
+      font-weight: 600;
+      color: #e0e0e0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── 分数 ── */
+    .rank-score {
+      font-size: calc(var(--lb-font-size) + 4px);
+      font-weight: 800;
+      color: #ffcc00;
+      flex-shrink: 0;
+      min-width: 50px;
+      text-align: right;
+      text-shadow: 0 0 8px rgba(255, 204, 0, 0.3);
+    }
+
+    /* ── 分数条 ── */
+    .rank-bar-wrap {
+      width: 90px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 3px;
+      overflow: hidden;
+      flex-shrink: 0;
+      margin-left: 2px;
+    }
+
+    .rank-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #6366f1, #8b5cf6);
+      border-radius: 3px;
+      transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+      width: 0;
+    }
+
+    /* ── 排名变化 ── */
+    .rank-change {
+      font-size: 14px;
+      font-weight: 800;
+      flex-shrink: 0;
+      min-width: 28px;
+      text-align: center;
+      opacity: 0;
+      transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+
+    .rank-change.up {
+      color: #22c55e;
+      opacity: 1;
+      animation: popUp 0.5s ease-out;
+    }
+
+    .rank-change.down {
+      color: #ef4444;
+      opacity: 1;
+      animation: popDown 0.5s ease-out;
+    }
+
+    .rank-change.same {
+      color: #888;
+    }
+
+    @keyframes popUp {
+      0%   { transform: translateY(8px); opacity: 0; }
+      100% { transform: translateY(0);   opacity: 1; }
+    }
+
+    @keyframes popDown {
+      0%   { transform: translateY(-8px); opacity: 0; }
+      100% { transform: translateY(0);    opacity: 1; }
+    }
+
+    /* ── 空状态 ── */
+    .leaderboard .empty-state {
+      text-align: center;
+      color: rgba(255, 255, 255, 0.3);
+      padding: 40px 0;
+      font-size: 15px;
+    }
+
+    /* ── 淡入动画 ── */
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .rank-row.enter {
+      animation: fadeSlideIn 0.4s ease-out;
+    }
+  </style>
+</head>
+<body>
+
+<div class="leaderboard" id="leaderboard">
+  <div class="leaderboard-header">
+    <h2>🏆 排行榜</h2>
+    <div class="subtitle" id="lb-subtitle"></div>
+  </div>
+  <div class="rank-list" id="rank-list">
+    <div class="empty-state">等待数据...</div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    // ── URL 参数 ──
+    const params = new URLSearchParams(window.location.search);
+    const fontSize = params.get('size') || '18';
+    const lbWidth  = params.get('width') || '480';
+
+    document.documentElement.style.setProperty('--lb-font-size', fontSize + 'px');
+    document.documentElement.style.setProperty('--lb-width', lbWidth + 'px');
+
+    // ── DOM ──
+    const rankList   = document.getElementById('rank-list');
+    const subtitleEl = document.getElementById('lb-subtitle');
+
+    // ── 状态 ──
+    let prevRankings = [];  // 用于检测变化
+
+    // ── 排名徽章显示 ──
+    function rankDisplay(n) {
+      const medals = ['🥇', '🥈', '🥉'];
+      return medals[n - 1] || n;
+    }
+
+    // ── 变化检测 ──
+    function getChangeClass(prev, current) {
+      if (prev == null || current == null) return '';
+      if (current < prev) return 'up';
+      if (current > prev) return 'down';
+      return 'same';
+    }
+
+    function getChangeArrow(prev, current) {
+      if (prev == null || current == null) return '';
+      if (current < prev) return '↑';
+      if (current > prev) return '↓';
+      return '·';
+    }
+
+    // ── 渲染 ──
+    function renderRankings(rankings, maxScore) {
+      if (!rankings || rankings.length === 0) {
+        rankList.innerHTML = '<div class="empty-state">暂无排名数据</div>';
+        return;
+      }
+
+      // 找出当前 rank → 之前 rank 的映射
+      const prevMap = {};
+      prevRankings.forEach(function (r, i) {
+        prevMap[r.productName || r.productId || r.model] = i + 1;
+      });
+
+      const scoreMax = maxScore || Math.max.apply(null, rankings.map(function (r) { return r.score || r.totalScore || 0; })) || 100;
+
+      rankList.innerHTML = rankings.map(function (r, i) {
+        var currentRank = i + 1;
+        var pid = r.productName || r.productId || r.model || r.name || '';
+        var name = r.productName || r.model || r.name || r.brand || '';
+        if (r.brand && r.model) name = r.brand + ' ' + r.model;
+        var score = r.score != null ? r.score : (r.totalScore != null ? r.totalScore : 0);
+        var prevRank = prevMap[pid];
+        var changeCls = getChangeClass(prevRank, currentRank);
+        var changeArr = getChangeArrow(prevRank, currentRank);
+        var barPct = Math.min(100, (score / scoreMax) * 100);
+        var rankCls = 'rank-row';
+
+        if (currentRank <= 3) {
+          rankCls += ' rank-' + currentRank;
+        }
+
+        return '<div class="' + rankCls + '">' +
+          '<div class="rank-badge">' + rankDisplay(currentRank) + '</div>' +
+          '<span class="rank-name" title="' + name + '">' + name + '</span>' +
+          '<span class="rank-score">' + score.toFixed(1) + '</span>' +
+          '<div class="rank-bar-wrap"><div class="rank-bar-fill" style="width:' + barPct + '%"></div></div>' +
+          '<span class="rank-change ' + changeCls + '">' + changeArr + '</span>' +
+        '</div>';
+      }).join('');
+
+      // 保存当前排名用于下次比较
+      prevRankings = rankings.map(function (r, i) {
+        return { productName: r.productName || r.productId || r.model, rank: i + 1 };
+      });
+    }
+
+    // ── WebSocket ──
+    let ws;
+    let reconnectTimer;
+    let reconnectDelay = 1000;
+
+    function connect() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
+      try {
+        ws = new WebSocket('ws://localhost:9527/ws');
+      } catch (e) {
+        scheduleReconnect();
+        return;
+      }
+
+      ws.onopen = function () {
+        console.log('[Leaderboard] WebSocket connected');
+        reconnectDelay = 1000;
+
+        // 订阅排行榜事件
+        ws.send(JSON.stringify({ type: 'subscribe', event: 'leaderboard' }));
+      };
+
+      ws.onmessage = function (ev) {
+        var msg;
+        try { msg = JSON.parse(ev.data); } catch (e) { return; }
+
+        var action = msg.action || msg.type || '';
+
+        // ── 排行榜 (任务描述格式) ──
+        if (action === 'leaderboard' || msg.type === 'leaderboard_event') {
+          var payload = msg.payload || msg;
+          var rankings = payload.rankings || payload.leaderboard || [];
+          renderRankings(rankings, payload.maxScore || payload.maxPossible);
+          if (payload.sessionName) subtitleEl.textContent = payload.sessionName;
+        }
+
+        // ── 排行榜 (API_SPEC: scoring.leaderboard) ──
+        // leaderboard response 通过 REST GET 获取，但 WebSocket 可能推送
+        if (action === 'leaderboard.update' || action === 'leaderboard.reveal') {
+          var payload = msg.payload || {};
+          var rankings = payload.rankings || payload.leaderboard || [];
+          renderRankings(rankings, payload.maxScore || payload.maxPossible);
+          if (payload.sessionName) subtitleEl.textContent = payload.sessionName;
+        }
+
+        // ── scoring session 更新 ──
+        if (action === 'scoring.updated' || action === 'scoring.completed') {
+          var payload = msg.payload || {};
+          if (payload.leaderboard) {
+            renderRankings(payload.leaderboard, payload.maxPossible);
+          }
+        }
+      };
+
+      ws.onerror = function () {};
+      ws.onclose = function () {
+        console.log('[Leaderboard] WebSocket closed, reconnecting...');
+        scheduleReconnect();
+      };
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(function () {
+        reconnectTimer = null;
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+        connect();
+      }, reconnectDelay);
+    }
+
+    connect();
+  })();
+</script>
+</body>
+</html>

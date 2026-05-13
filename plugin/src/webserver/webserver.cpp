@@ -18,6 +18,11 @@ extern "C" {
 #include "../source/source_manager.h"
 #include "../scene/scene_manager.h"
 
+// Audio, Recorder, Timecode
+#include "../audio/audio_manager.h"
+#include "../recorder/recorder.h"
+#include "../timecode/timecode_gen.h"
+
 // C++ 标准库
 #include <string>
 #include <vector>
@@ -828,6 +833,449 @@ static int handle_preset_save(struct mg_connection *conn, void *cbdata) {
     return 200;
 }
 
+// ============ 音频路由 ============
+
+// GET /api/audio/channels
+static int handle_audio_channels(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->audio) {
+        resp_error(conn, 500, "audio_manager not available");
+        return 500;
+    }
+
+    resp_json(conn, ctx->audio->channels_json());
+    return 200;
+}
+
+// POST /api/audio/volume
+static int handle_audio_volume(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->audio) {
+        resp_error(conn, 500, "audio_manager not available");
+        return 500;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string source_name = req.value("sourceName", "");
+        double volume = req.value("volume", 1.0);
+        if (source_name.empty()) {
+            resp_error(conn, 400, "missing sourceName");
+            return 400;
+        }
+        if (ctx->audio->set_volume(source_name, volume)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to set volume");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
+}
+
+// POST /api/audio/mute
+static int handle_audio_mute(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->audio) {
+        resp_error(conn, 500, "audio_manager not available");
+        return 500;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string source_name = req.value("sourceName", "");
+        bool muted = req.value("muted", false);
+        if (source_name.empty()) {
+            resp_error(conn, 400, "missing sourceName");
+            return 400;
+        }
+        if (ctx->audio->set_mute(source_name, muted)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to set mute");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
+}
+
+// POST /api/audio/solo
+static int handle_audio_solo(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->audio) {
+        resp_error(conn, 500, "audio_manager not available");
+        return 500;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string source_name = req.value("sourceName", "");
+        bool solo = req.value("solo", false);
+        if (source_name.empty()) {
+            resp_error(conn, 400, "missing sourceName");
+            return 400;
+        }
+        if (ctx->audio->set_solo(source_name, solo)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to set solo");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
+}
+
+// POST /api/audio/pan
+static int handle_audio_pan(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->audio) {
+        resp_error(conn, 500, "audio_manager not available");
+        return 500;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        std::string source_name = req.value("sourceName", "");
+        double pan = req.value("pan", 0.0);
+        if (source_name.empty()) {
+            resp_error(conn, 400, "missing sourceName");
+            return 400;
+        }
+        if (ctx->audio->set_pan(source_name, pan)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to set pan");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
+}
+
+// GET/POST /api/audio/master-volume
+static int handle_audio_master_volume(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->audio) {
+        resp_error(conn, 500, "audio_manager not available");
+        return 500;
+    }
+
+    if (strcmp(ri->request_method, "GET") == 0) {
+        json body;
+        body["volume"] = ctx->audio->master_volume();
+        resp_json(conn, body);
+        return 200;
+    }
+
+    // POST: set master volume
+    std::string req_body = read_request_body(conn);
+    if (req_body.empty()) {
+        resp_error(conn, 400, "missing request body");
+        return 400;
+    }
+
+    try {
+        json req = json::parse(req_body);
+        double volume = req.value("volume", 1.0);
+        if (ctx->audio->set_master_volume(volume)) {
+            resp_ok(conn);
+        } else {
+            resp_error(conn, 500, "failed to set master volume");
+        }
+        return 200;
+    } catch (const json::parse_error &e) {
+        resp_error(conn, 400, std::string("invalid json: ") + e.what());
+        return 400;
+    }
+}
+
+// ============ 录制路由（补充） ============
+
+// POST /api/rec/pause
+static int handle_rec_pause(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->recorder) {
+        resp_error(conn, 500, "recorder not available");
+        return 500;
+    }
+
+    if (ctx->recorder->pause()) {
+        resp_ok(conn);
+    } else {
+        resp_error(conn, 500, "failed to pause recording");
+    }
+    return 200;
+}
+
+// POST /api/rec/resume
+static int handle_rec_resume(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->recorder) {
+        resp_error(conn, 500, "recorder not available");
+        return 500;
+    }
+
+    if (ctx->recorder->resume()) {
+        resp_ok(conn);
+    } else {
+        resp_error(conn, 500, "failed to resume recording");
+    }
+    return 200;
+}
+
+// GET /api/rec/status
+static int handle_rec_status(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->recorder) {
+        resp_error(conn, 500, "recorder not available");
+        return 500;
+    }
+
+    resp_json(conn, ctx->recorder->status_json());
+    return 200;
+}
+
+// ============ 时间码路由 ============
+
+// GET /api/timecode
+static int handle_timecode(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!ctx || !ctx->timecode) {
+        resp_error(conn, 500, "timecode_gen not available");
+        return 500;
+    }
+
+    resp_json(conn, ctx->timecode->to_json());
+    return 200;
+}
+
+// ============ 叠加层路由 ============
+
+// GET/POST /api/overlay/config
+static int handle_overlay_config(struct mg_connection *conn, void *cbdata) {
+    (void)cbdata;
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (strcmp(ri->request_method, "GET") == 0) {
+        json body;
+        body["opacity"] = 1.0;
+        body["position"] = "top-right";
+        body["showFrameCount"] = true;
+        body["showTimecode"] = true;
+        body["showRecordingStatus"] = true;
+        body["fontSize"] = 24;
+        body["fontColor"] = "#ffffff";
+        resp_json(conn, body);
+        return 200;
+    }
+
+    // POST: save overlay config (mock)
+    std::string req_body = read_request_body(conn);
+    if (!req_body.empty()) {
+        try {
+            json req = json::parse(req_body);
+            blog_info("overlay config saved: %s", req.dump().c_str());
+        } catch (...) {
+            // 忽略
+        }
+    }
+    resp_ok(conn);
+    return 200;
+}
+
+// ============ 预设路由（补充） ============
+
+// POST /api/preset/load
+static int handle_preset_load(struct mg_connection *conn, void *cbdata) {
+    (void)cbdata;
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (!req_body.empty()) {
+        try {
+            json req = json::parse(req_body);
+            blog_info("preset load: %s", req.dump().c_str());
+        } catch (...) {
+            // 忽略
+        }
+    }
+    resp_ok(conn);
+    return 200;
+}
+
+// POST /api/preset/delete
+static int handle_preset_delete(struct mg_connection *conn, void *cbdata) {
+    (void)cbdata;
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    std::string req_body = read_request_body(conn);
+    if (!req_body.empty()) {
+        try {
+            json req = json::parse(req_body);
+            blog_info("preset delete: %s", req.dump().c_str());
+        } catch (...) {
+            // 忽略
+        }
+    }
+    resp_ok(conn);
+    return 200;
+}
+
+// ============ 设置路由 ============
+
+// GET/POST /api/settings
+static int handle_settings(struct mg_connection *conn, void *cbdata) {
+    (void)cbdata;
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (strcmp(ri->request_method, "GET") == 0) {
+        json body;
+        body["recordPath"] = "C:\\Recordings";
+        body["autoSplit"] = false;
+        body["splitIntervalMin"] = 30;
+        body["format"] = "mp4";
+        body["quality"] = "high";
+        body["webServerPort"] = 9527;
+        body["language"] = "zh-CN";
+        resp_json(conn, body);
+        return 200;
+    }
+
+    // POST: save settings (mock)
+    std::string req_body = read_request_body(conn);
+    if (!req_body.empty()) {
+        try {
+            json req = json::parse(req_body);
+            blog_info("settings saved: %s", req.dump().c_str());
+        } catch (...) {
+            // 忽略
+        }
+    }
+    resp_ok(conn);
+    return 200;
+}
+
 // ============ WebSocket 处理器 ============
 
 static int ws_connect_handler(const struct mg_connection *conn, void *cbdata) {
@@ -1089,8 +1537,46 @@ bool ws_start(PluginContext *ctx) {
                            handle_preset_list, ctx);
     mg_set_request_handler(ctx->web_server->ctx, "/api/preset/save",
                            handle_preset_save, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/preset/load",
+                           handle_preset_load, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/preset/delete",
+                           handle_preset_delete, ctx);
 
-    blog_info("Registered %d REST routes", 20);
+    // 音频路由
+    mg_set_request_handler(ctx->web_server->ctx, "/api/audio/channels",
+                           handle_audio_channels, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/audio/volume",
+                           handle_audio_volume, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/audio/mute",
+                           handle_audio_mute, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/audio/solo",
+                           handle_audio_solo, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/audio/pan",
+                           handle_audio_pan, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/audio/master-volume",
+                           handle_audio_master_volume, ctx);
+
+    // 录制路由（补充）
+    mg_set_request_handler(ctx->web_server->ctx, "/api/rec/pause",
+                           handle_rec_pause, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/rec/resume",
+                           handle_rec_resume, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/rec/status",
+                           handle_rec_status, ctx);
+
+    // 时间码路由
+    mg_set_request_handler(ctx->web_server->ctx, "/api/timecode",
+                           handle_timecode, ctx);
+
+    // 叠加层路由
+    mg_set_request_handler(ctx->web_server->ctx, "/api/overlay/config",
+                           handle_overlay_config, ctx);
+
+    // 设置路由
+    mg_set_request_handler(ctx->web_server->ctx, "/api/settings",
+                           handle_settings, ctx);
+
+    blog_info("Registered %d REST routes", 37);
 
     // 注册 WebSocket
     mg_set_websocket_handler(ctx->web_server->ctx, "/ws",

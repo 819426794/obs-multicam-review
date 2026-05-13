@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OBS Overlay — Timecode</title>
+  <style>
+    :root {
+      --tc-size: 48px;
+      --tc-color: #ffffff;
+      --tc-bg: 0.5;
+      --tc-pos-bottom: 20px;
+      --tc-pos-right: 20px;
+      --tc-pos-left: auto;
+      --tc-pos-top: auto;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: transparent;
+      font-family: 'JetBrains Mono', 'Courier New', 'Consolas', monospace;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #container {
+      position: fixed;
+      bottom: var(--tc-pos-bottom);
+      right: var(--tc-pos-right);
+      left: var(--tc-pos-left);
+      top: var(--tc-pos-top);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    /* 录制红点 */
+    #red-dot {
+      width: 14px;
+      height: 14px;
+      min-width: 14px;
+      background: #ef4444;
+      border-radius: 50%;
+      display: none;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.7);
+    }
+
+    #red-dot.recording {
+      display: block;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.35; transform: scale(0.75); }
+    }
+
+    /* 时间码显示 */
+    #timecode-display {
+      font-size: var(--tc-size);
+      font-weight: bold;
+      color: var(--tc-color);
+      background: rgba(0, 0, 0, var(--tc-bg));
+      padding: 6px 20px;
+      border-radius: 8px;
+      text-shadow:
+        0 0 10px rgba(0, 0, 0, 0.9),
+        0 0 20px rgba(0, 0, 0, 0.6),
+        2px 2px 4px rgba(0, 0, 0, 0.8);
+      letter-spacing: 2px;
+      font-variant-numeric: tabular-nums;
+      transition: font-size 0.3s ease;
+    }
+
+    /* 帧率指示器（可选小字） */
+    #fps-indicator {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.4);
+      position: fixed;
+      bottom: 6px;
+      right: 26px;
+      pointer-events: none;
+      z-index: 99;
+    }
+
+    /* 录制状态标签 */
+    #rec-label {
+      display: none;
+      font-size: 14px;
+      font-weight: 700;
+      color: #ef4444;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      text-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+      animation: fadeBlink 2s ease-in-out infinite;
+    }
+
+    #rec-label.visible {
+      display: inline;
+    }
+
+    @keyframes fadeBlink {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.4; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="container">
+  <div id="red-dot"></div>
+  <span id="rec-label">● REC</span>
+  <div id="timecode-display">00:00:00:00</div>
+</div>
+
+<div id="fps-indicator"></div>
+
+<script>
+  (function () {
+    // ── URL 参数解析 ──
+    const params = new URLSearchParams(window.location.search);
+
+    const size   = params.get('size')  || '48';
+    const color  = params.get('color') || '#ffffff';
+    const bg     = params.get('bg')    || '0.5';
+    const pos    = params.get('pos')   || 'bottom-right';
+
+    // 应用 CSS 变量
+    const root = document.documentElement;
+    root.style.setProperty('--tc-size',  size + 'px');
+    root.style.setProperty('--tc-color', color);
+    root.style.setProperty('--tc-bg',    bg);
+
+    const container = document.getElementById('container');
+    container.style.bottom = 'auto';
+    container.style.right  = 'auto';
+    container.style.left   = 'auto';
+    container.style.top    = 'auto';
+
+    switch (pos) {
+      case 'top-left':
+        container.style.top   = '20px';
+        container.style.left  = '20px';
+        break;
+      case 'top-right':
+        container.style.top   = '20px';
+        container.style.right = '20px';
+        break;
+      case 'bottom-left':
+        container.style.bottom = '20px';
+        container.style.left   = '20px';
+        break;
+      case 'bottom-right':
+      default:
+        container.style.bottom = '20px';
+        container.style.right  = '20px';
+        break;
+    }
+
+    // ── DOM 引用 ──
+    const display  = document.getElementById('timecode-display');
+    const redDot   = document.getElementById('red-dot');
+    const recLabel = document.getElementById('rec-label');
+    const fpsEl    = document.getElementById('fps-indicator');
+
+    // ── WebSocket ──
+    let ws;
+    let reconnectTimer;
+    let reconnectDelay = 1000;
+
+    function connect() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
+      try {
+        ws = new WebSocket('ws://localhost:9527/ws');
+      } catch (e) {
+        console.warn('[Timecode] WS constructor failed:', e);
+        scheduleReconnect();
+        return;
+      }
+
+      ws.onopen = function () {
+        console.log('[Timecode] WebSocket connected');
+        reconnectDelay = 1000;
+
+        // 订阅时间码
+        ws.send(JSON.stringify({
+          type: 'subscribe',
+          event: 'timecode'
+        }));
+
+        // 也订阅录制状态
+        ws.send(JSON.stringify({
+          type: 'subscribe',
+          event: 'recording_state'
+        }));
+      };
+
+      ws.onmessage = function (ev) {
+        let msg;
+        try {
+          msg = JSON.parse(ev.data);
+        } catch (e) {
+          return;
+        }
+
+        // ── 多种事件格式兼容 ──
+        const action = msg.action || msg.type || '';
+
+        // --- 时间码 (任务描述格式) ---
+        if (action === 'timecode' || msg.type === 'timecode_event') {
+          const payload = msg.payload || msg;
+          const tc = payload.smpte || payload.timecode || '00:00:00:00';
+          display.textContent = tc;
+          if (payload.fps != null) {
+            fpsEl.textContent = payload.fps + ' fps';
+          }
+        }
+
+        // --- 时间码 (API_SPEC 格式: timecode.tick) ---
+        if (action === 'timecode.tick') {
+          const payload = msg.payload || {};
+          display.textContent = payload.timecode || '00:00:00:00';
+          if (payload.fps != null) {
+            fpsEl.textContent = payload.fps + ' fps';
+          }
+        }
+
+        // --- 录制状态 (任务描述格式) ---
+        if (action === 'recording_state') {
+          const state = (msg.payload && msg.payload.state) || msg.state;
+          setRecordingState(state);
+        }
+
+        // --- 录制事件 (API_SPEC 格式) ---
+        if (action === 'recording.started') {
+          setRecordingState('recording');
+        }
+        if (action === 'recording.stopped' || action === 'recording.paused') {
+          setRecordingState(action.includes('paused') ? 'paused' : 'idle');
+        }
+        if (action === 'recording.resumed') {
+          setRecordingState('recording');
+        }
+
+        // --- 系统状态 (含 recordingState) ---
+        if (action === 'system.status') {
+          const payload = msg.payload || {};
+          setRecordingState(payload.recordingState);
+          if (payload.timecode) {
+            display.textContent = payload.timecode;
+          }
+          if (payload.fps != null) {
+            fpsEl.textContent = payload.fps + ' fps';
+          }
+        }
+      };
+
+      ws.onerror = function () {
+        // 静默处理，onclose 会触发重连
+      };
+
+      ws.onclose = function () {
+        console.log('[Timecode] WebSocket closed, reconnecting...');
+        scheduleReconnect();
+      };
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(function () {
+        reconnectTimer = null;
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+        connect();
+      }, reconnectDelay);
+    }
+
+    // ── 录制状态更新 ──
+    function setRecordingState(state) {
+      if (state === 'recording') {
+        redDot.classList.add('recording');
+        recLabel.classList.add('visible');
+      } else {
+        redDot.classList.remove('recording');
+        recLabel.classList.remove('visible');
+      }
+    }
+
+    // ── 启动 ──
+    connect();
+  })();
+</script>
+</body>
+</html>

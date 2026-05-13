@@ -55,10 +55,40 @@ export function fetchSystemStatus() {
   return request<T.SystemStatus>('GET', '/system/status');
 }
 
+// ============ 音频 ============
+
+export function fetchAudioChannels() {
+  return request<{ channels: T.AudioChannel[] }>('GET', '/audio/channels');
+}
+
+export function setVolume(sourceName: string, volume: number) {
+  return request<void>('POST', '/audio/volume', { sourceName, volume });
+}
+
+export function setMute(sourceName: string, muted: boolean) {
+  return request<void>('POST', '/audio/mute', { sourceName, muted });
+}
+
+export function setSolo(sourceName: string, solo: boolean) {
+  return request<void>('POST', '/audio/solo', { sourceName, solo });
+}
+
+export function setPan(sourceName: string, pan: number) {
+  return request<void>('POST', '/audio/pan', { sourceName, pan });
+}
+
+export function fetchMasterVolume() {
+  return request<{ volume: number }>('GET', '/audio/master-volume');
+}
+
+export function setMasterVolume(volume: number) {
+  return request<void>('POST', '/audio/master-volume', { volume });
+}
+
 // ============ 录制 ============
 
-export function recStart() {
-  return request<T.RecStartResponse>('POST', '/rec/start');
+export function recStart(body?: { outputDir: string }) {
+  return request<T.RecStartResponse>('POST', '/rec/start', body);
 }
 
 export function recStop() {
@@ -71,6 +101,10 @@ export function recPause() {
 
 export function recResume() {
   return request<void>('POST', '/rec/resume');
+}
+
+export function fetchRecordingStatus() {
+  return request<T.RecStatus>('GET', '/rec/status');
 }
 
 // ============ 场景 ============
@@ -127,6 +161,50 @@ export function fetchMarkerList(recordingId: string) {
 
 export function addMarker(body: T.MarkerAddRequest) {
   return request<T.Marker>('POST', '/marker/add', body);
+}
+
+// ============ 时间码 ============
+
+export function fetchTimecode() {
+  return request<{ smpte: string; seconds: number; frameNumber: number }>('GET', '/timecode');
+}
+
+// ============ 叠加层 ============
+
+export function fetchOverlayConfig() {
+  return request<Record<string, unknown>>('GET', '/overlay/config');
+}
+
+export function saveOverlayConfig(body: Record<string, unknown>) {
+  return request<void>('POST', '/overlay/config', body);
+}
+
+// ============ 预设 ============
+
+export function fetchPresetList() {
+  return request<T.PresetListItem[]>('GET', '/preset/list');
+}
+
+export function savePreset(name: string) {
+  return request<void>('POST', '/preset/save', { name });
+}
+
+export function loadPreset(name: string) {
+  return request<void>('POST', '/preset/load', { name });
+}
+
+export function deletePreset(name: string) {
+  return request<void>('POST', '/preset/delete', { name });
+}
+
+// ============ 设置 ============
+
+export function fetchSettings() {
+  return request<Record<string, unknown>>('GET', '/settings');
+}
+
+export function saveSettings(body: Record<string, unknown>) {
+  return request<void>('POST', '/settings', body);
 }
 
 // ============ 项目 ============

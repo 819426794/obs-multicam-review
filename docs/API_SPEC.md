@@ -299,7 +299,70 @@
 
 ---
 
-### 3.5 预设管理
+### 3.5 音频控制
+
+| Endpoint | Method | Request Body | Response |
+|----------|--------|-------------|----------|
+| `/api/audio/channels` | GET | — | `{ channels: AudioChannel[] }` |
+| `/api/audio/volume` | POST | `{ sourceName, volume }` | `{ ok: true }` |
+| `/api/audio/mute` | POST | `{ sourceName, muted }` | `{ ok: true }` |
+| `/api/audio/solo` | POST | `{ sourceName, solo }` | `{ ok: true }` |
+| `/api/audio/pan` | POST | `{ sourceName, pan }` | `{ ok: true }` |
+| `/api/audio/master-volume` | GET | — | `{ volume: number }` |
+| `/api/audio/master-volume` | POST | `{ volume }` | `{ ok: true }` |
+
+---
+
+### 3.6 录制控制（补充）
+
+| Endpoint | Method | Request Body | Response |
+|----------|--------|-------------|----------|
+| `/api/rec/start` | POST | `{ outputDir }` | `{ ok: true }` |
+| `/api/rec/stop` | POST | — | `{ ok: true }` |
+| `/api/rec/pause` | POST | — | `{ ok: true }` |
+| `/api/rec/resume` | POST | — | `{ ok: true }` |
+| `/api/rec/status` | GET | — | `RecStatus` |
+
+---
+
+### 3.7 时间码
+
+| Endpoint | Method | Request Body | Response |
+|----------|--------|-------------|----------|
+| `/api/timecode` | GET | — | `{ smpte, seconds, frameNumber }` |
+
+---
+
+### 3.8 叠加层配置
+
+| Endpoint | Method | Request Body | Response |
+|----------|--------|-------------|----------|
+| `/api/overlay/config` | GET | — | overlay config JSON |
+| `/api/overlay/config` | POST | config JSON | `{ ok: true }` |
+
+---
+
+### 3.9 预设管理（补充）
+
+| Endpoint | Method | Request Body | Response |
+|----------|--------|-------------|----------|
+| `/api/preset/list` | GET | — | `PresetListItem[]` |
+| `/api/preset/save` | POST | `{ name }` | `{ ok: true }` |
+| `/api/preset/load` | POST | `{ name }` | `{ ok: true }` |
+| `/api/preset/delete` | POST | `{ name }` | `{ ok: true }` |
+
+---
+
+### 3.10 系统设置
+
+| Endpoint | Method | Request Body | Response |
+|----------|--------|-------------|----------|
+| `/api/settings` | GET | — | settings JSON |
+| `/api/settings` | POST | settings JSON | `{ ok: true }` |
+
+---
+
+### 3.11 预设管理
 
 #### `GET /api/preset/list`
 获取预设列表
@@ -329,7 +392,7 @@
 
 ---
 
-### 3.6 系统状态
+### 3.12 系统状态
 
 #### `GET /api/system/status`
 获取系统状态
@@ -628,7 +691,7 @@ type WsCommandAction =
 
 ---
 
-### 3.7 项目管理
+### 3.13 项目管理
 
 #### `GET /api/projects`
 获取项目列表
@@ -661,7 +724,7 @@ type WsCommandAction =
 
 ---
 
-### 3.8 产品管理
+### 3.14 产品管理
 
 #### `GET /api/products?projectId=uuid`
 获取产品列表（按 sortOrder 排序）
@@ -713,7 +776,7 @@ type WsCommandAction =
 
 ---
 
-### 3.9 评分维度
+### 3.15 评分维度
 
 #### `GET /api/dimensions/templates`
 获取维度模板列表
@@ -743,7 +806,7 @@ type WsCommandAction =
 
 ---
 
-### 3.10 评分会话
+### 3.16 评分会话
 
 #### `POST /api/scoring/sessions`
 创建评分会话
