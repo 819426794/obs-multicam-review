@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>多机位叠加层 — 产品信息卡</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: transparent;
+      font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+      overflow: hidden;
+      width: 1920px;
+      height: 1080px;
+    }
+
+    /* ============ 产品信息卡 ============ */
+    .product-card {
+      position: absolute;
+      background: linear-gradient(135deg, rgba(10,20,40,0.92), rgba(20,30,60,0.85));
+      border: 2px solid #00ffcc;
+      border-radius: 12px;
+      padding: 24px 28px;
+      min-width: 400px;
+      box-shadow: 0 8px 32px rgba(0,255,204,0.15);
+      transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+
+    .product-card.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .product-card .brand {
+      font-size: 32px;
+      font-weight: 800;
+      color: #ffffff;
+      margin-bottom: 4px;
+    }
+
+    .product-card .model {
+      font-size: 24px;
+      color: #00ffcc;
+      margin-bottom: 8px;
+    }
+
+    .product-card .price {
+      font-size: 28px;
+      font-weight: 700;
+      color: #ffcc00;
+      margin-bottom: 10px;
+    }
+
+    .product-card .specs {
+      font-size: 16px;
+      color: #aabbcc;
+      line-height: 1.6;
+    }
+
+    /* ============ 品牌遮蔽 ============ */
+    .brand-masked .brand::first-letter {
+      visibility: hidden;
+    }
+
+    .brand-masked .brand::before {
+      content: '◼';
+      margin-right: 2px;
+    }
+
+    /* ============ 评分条 ============ */
+    .score-bar {
+      position: absolute;
+      background: linear-gradient(135deg, rgba(10,20,40,0.9), rgba(20,30,60,0.8));
+      border: 1px solid #ffcc00;
+      border-radius: 8px;
+      padding: 16px 20px;
+      min-width: 300px;
+    }
+
+    .score-bar .dimension {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .score-bar .dim-label {
+      font-size: 16px;
+      color: #ccc;
+      width: 60px;
+    }
+
+    .score-bar .dim-bar {
+      flex: 1;
+      height: 8px;
+      background: #333;
+      border-radius: 4px;
+      margin: 0 10px;
+      overflow: hidden;
+    }
+
+    .score-bar .dim-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #ffcc00, #ff9900);
+      border-radius: 4px;
+      transition: width 0.5s ease-out;
+    }
+
+    .score-bar .dim-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #ffcc00;
+      width: 30px;
+      text-align: right;
+    }
+
+    .score-bar .total {
+      text-align: right;
+      font-size: 24px;
+      font-weight: 800;
+      color: #ffffff;
+      margin-top: 8px;
+      border-top: 1px solid #444;
+      padding-top: 8px;
+    }
+
+    /* ============ 排行榜 ============ */
+    .leaderboard {
+      position: absolute;
+      background: linear-gradient(135deg, rgba(10,20,40,0.9), rgba(15,25,45,0.85));
+      border: 2px solid #6366f1;
+      border-radius: 12px;
+      padding: 20px;
+      min-width: 420px;
+    }
+
+    .leaderboard h2 {
+      font-size: 22px;
+      color: #6366f1;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+
+    .leaderboard .rank-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      margin-bottom: 4px;
+      border-radius: 6px;
+      transition: background 0.3s;
+    }
+
+    .leaderboard .rank-row:nth-child(odd) { background: rgba(255,255,255,0.03); }
+    .leaderboard .rank-row.rank-1 { background: rgba(255,215,0,0.1); border: 1px solid rgba(255,215,0,0.3); }
+
+    .leaderboard .rank-num { font-size: 18px; font-weight: 800; width: 30px; }
+    .leaderboard .rank-name { flex: 1; font-size: 16px; color: #ddd; }
+    .leaderboard .rank-score { font-size: 20px; font-weight: 700; color: #ffcc00; }
+    .leaderboard .rank-bar {
+      width: 120px;
+      height: 6px;
+      background: #333;
+      border-radius: 3px;
+      margin-left: 10px;
+      overflow: hidden;
+    }
+    .leaderboard .rank-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #6366f1, #8b5cf6);
+      border-radius: 3px;
+    }
+
+    /* ============ 时间码 ============ */
+    .timecode {
+      position: absolute;
+      bottom: 10px;
+      right: 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 16px;
+      color: rgba(255,255,255,0.5);
+    }
+
+    /* ============ 动画 ============ */
+    @keyframes slideInLeft {
+      from { transform: translateX(-100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    @keyframes slideInRight {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes scaleIn {
+      from { transform: scale(0.8); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .anim-slide-left { animation: slideInLeft 0.4s ease-out; }
+    .anim-slide-right { animation: slideInRight 0.4s ease-out; }
+    .anim-fade { animation: fadeIn 0.3s ease-out; }
+    .anim-scale { animation: scaleIn 0.4s ease-out; }
+  </style>
+</head>
+<body>
+  <!-- OBS Browser Source 指向此文件，通过 WebSocket 接收渲染指令 -->
+
+  <div id="product-card" class="product-card hidden" style="top: 60px; left: 80px;">
+    <div class="brand" id="pc-brand"></div>
+    <div class="model" id="pc-model"></div>
+    <div class="price" id="pc-price"></div>
+    <div class="specs" id="pc-specs"></div>
+  </div>
+
+  <div id="leaderboard" class="leaderboard hidden" style="top: 60px; right: 80px;">
+    <h2>排行榜</h2>
+    <div id="lb-rows"></div>
+  </div>
+
+  <div id="timecode" class="timecode">00:00:00.00</div>
+
+  <script>
+    // WebSocket 连接到插件
+    const ws = new WebSocket('ws://localhost:9527/overlay/ws');
+
+    ws.onopen = () => console.log('[Overlay] Connected');
+    ws.onclose = () => { setTimeout(() => location.reload(), 2000); };
+    ws.onerror = () => ws.close();
+
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        handleMessage(msg);
+      } catch (e) {
+        console.error('[Overlay] Invalid message', e);
+      }
+    };
+
+    function handleMessage(msg) {
+      switch (msg.action) {
+        case 'product.show':
+          showProduct(msg.payload);
+          break;
+        case 'product.hide':
+          hideProduct();
+          break;
+        case 'leaderboard.update':
+          updateLeaderboard(msg.payload);
+          break;
+        case 'leaderboard.reveal':
+          revealLeaderboard(msg.payload);
+          break;
+        case 'timecode':
+          document.getElementById('timecode').textContent = msg.payload.timecode;
+          break;
+        case 'brandmask.toggle':
+          document.body.classList.toggle('brand-masked', msg.payload.enabled);
+          break;
+      }
+    }
+
+    function showProduct(payload) {
+      const card = document.getElementById('product-card');
+      document.getElementById('pc-brand').textContent = payload.brand || '';
+      document.getElementById('pc-model').textContent = payload.model || '';
+      document.getElementById('pc-price').textContent = payload.price || '';
+      document.getElementById('pc-specs').textContent = payload.specs || '';
+
+      card.classList.remove('hidden');
+      card.classList.add('anim-slide-left');
+      card.style.top = (payload.position?.y || 60) + 'px';
+      card.style.left = (payload.position?.x || 80) + 'px';
+    }
+
+    function hideProduct() {
+      const card = document.getElementById('product-card');
+      card.classList.add('hidden');
+    }
+
+    function updateLeaderboard(payload) {
+      const lb = document.getElementById('leaderboard');
+      const rows = document.getElementById('lb-rows');
+
+      lb.classList.remove('hidden');
+      rows.innerHTML = payload.rankings.map((r, i) =>
+        `<div class="rank-row rank-${i+1}">
+          <span class="rank-num" style="color:${['#FFD700','#C0C0C0','#CD7F32'][i] || '#aaa'}">${i+1}</span>
+          <span class="rank-name">${r.name}</span>
+          <span class="rank-score">${r.score.toFixed(1)}分</span>
+          <span class="rank-bar"><span class="rank-bar-fill" style="width:${r.score}%"></span></span>
+        </div>`
+      ).join('');
+    }
+
+    function revealLeaderboard(payload) {
+      updateLeaderboard(payload);
+      const lb = document.getElementById('leaderboard');
+      lb.classList.add('anim-scale');
+    }
+  </script>
+</body>
+</html>

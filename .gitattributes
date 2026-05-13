@@ -1,0 +1,29 @@
+# C++ 源码行尾 LF
+*.cpp text eol=lf
+*.h   text eol=lf
+*.c   text eol=lf
+*.hpp text eol=lf
+
+# CMake
+CMakeLists.txt text eol=lf
+*.cmake         text eol=lf
+
+# 脚本
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.sh   text eol=lf
+
+# Web 前端
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.js   text eol=lf
+*.json text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+
+# 二进制 (Git LFS 或直接不追踪)
+*.dll   binary
+*.exe   binary
+*.pdb   binary
+*.lib   binary
+*.zip   binary

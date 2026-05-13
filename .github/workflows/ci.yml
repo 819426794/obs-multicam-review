@@ -1,0 +1,109 @@
+name: CI Build
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ============ Windows 构建 ============
+  build-windows:
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        build_type: [RelWithDebInfo, Release]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Download OBS SDK
+        run: |
+          Invoke-WebRequest -Uri https://github.com/obsproject/obs-studio/releases/download/30.2.0/OBS-Studio-30.2.0-SDK.zip -OutFile obs-sdk.zip
+          Expand-Archive obs-sdk.zip -DestinationPath obs-sdk -Force
+
+      - name: Setup third-party libs
+        run: .\scripts\ci-setup.ps1
+
+      - name: CMake Configure
+        run: |
+          cmake -S plugin -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+            -DOBS_SDK_DIR=${{ github.workspace }}/obs-sdk
+
+      - name: Build Plugin
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Build Web UI
+        working-directory: control-ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Package Artifact
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/obs-plugins/64bit
+          New-Item -ItemType Directory -Force -Path dist/data/obs-plugins/obs-multicam-review/web
+          Copy-Item build/${{ matrix.build_type }}/obs-multicam-review.dll dist/obs-plugins/64bit/
+          Copy-Item control-ui/dist/* dist/data/obs-plugins/obs-multicam-review/web/ -Recurse
+          Copy-Item overlay/* dist/data/obs-plugins/obs-multicam-review/overlay/ -Recurse
+
+      - name: Upload DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-multicam-review-${{ matrix.build_type }}
+          path: dist/
+
+  # ============ 代码风格检查 ============
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: clang-format check (C++)
+        uses: jidicula/clang-format-action@v4
+        with:
+          clang-format-version: '17'
+          check-path: plugin/src
+
+      - name: ESLint (TypeScript)
+        working-directory: control-ui
+        run: |
+          npm ci
+          npx eslint src/ --ext .ts,.tsx || true  # 先不阻断构建
+
+  # ============ Release 发布 ============
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: obs-multicam-review-Release
+          path: dist/
+
+      - name: Package installer
+        run: |
+          cd dist
+          zip -r obs-multicam-review-${{ github.ref_name }}.zip *
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/obs-multicam-review-${{ github.ref_name }}.zip
+          body_path: CHANGELOG.md
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

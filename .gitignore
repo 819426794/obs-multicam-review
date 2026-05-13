@@ -1,0 +1,38 @@
+# Build output
+build/
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Node
+node_modules/
+control-ui/dist/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Third party (downloaded by setup.ps1)
+plugin/third_party/*
+!plugin/third_party/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
