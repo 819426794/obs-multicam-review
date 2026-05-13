@@ -67,40 +67,40 @@ release/*   ← 发布准备
 
 ```
 obs-multicam-review/
+├── AGENTS.md                  # ⭐ AI 开发守则（文档优先）
+├── docs/                      # ⭐ 规范文档（接口真理源）
+│   ├── API_SPEC.md            # REST + WebSocket 接口规范
+│   ├── CODING_STANDARDS.md    # C++ / TypeScript 编码规范
+│   └── DEBUG_GUIDE.md         # 调试指南
 ├── plugin/                    # C++ OBS 插件
 │   ├── CMakeLists.txt
-│   ├── src/
-│   │   ├── main.cpp           # 插件入口
-│   │   ├── websocket_server.cpp
-│   │   ├── recorder.cpp
-│   │   ├── timecode.cpp
-│   │   ├── scene_manager.cpp
-│   │   ├── db_manager.cpp
-│   │   └── ...
-│   ├── third_party/
-│   │   └── civetweb/          # HTTP/WS 服务器
-│   └── data/
-│       ├── locale/            # 多语言
-│       └── assets/            # 内置资源
+│   └── src/
+│       ├── main.cpp           # 插件入口
+│       └── plugin.h           # 全局上下文
 ├── control-ui/                # React Web 控制台
 │   ├── package.json
-│   ├── vite.config.ts
-│   ├── src/
-│   │   ├── App.tsx
-│   │   ├── pages/
-│   │   ├── components/
-│   │   └── lib/
-│   └── ...
+│   └── src/
+│       └── App.tsx
 ├── overlay/                   # 叠加层 HTML
-│   ├── index.html
-│   ├── product-card.html
-│   └── leaderboard.html
+│   └── product-card.html
 ├── scripts/
 │   ├── setup.ps1
 │   ├── build.ps1
 │   └── install.ps1
 └── README.md
 ```
+
+## 📚 开发文档
+
+| 文档 | 用途 |
+|------|------|
+| [AGENTS.md](AGENTS.md) | ⭐ **AI 开发守则** — 修改代码前必须先读 |
+| [docs/API_SPEC.md](docs/API_SPEC.md) | **接口契约** — REST/WS 接口定义（真理源） |
+| [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) | **编码规范** — C++/TS 风格约定 |
+| [docs/DEBUG_GUIDE.md](docs/DEBUG_GUIDE.md) | **调试指南** — 调试流程 & 排查 |
+| [design/multicam-review-system-design.md](../design/multicam-review-system-design.md) | **架构设计** — v1.3 完整设计文档 |
+
+> ⚠️ **AI 开发守则**：任何功能开发都必须遵循 **文档优先 → 接口先行 → 代码实现** 的顺序。
 
 ## 许可
 
