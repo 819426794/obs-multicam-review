@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Camera, Mic, Settings, Clapperboard,
-  Monitor, List, Clock, FolderKanban, Play,
+  Monitor, List, Clock, FolderKanban, Play, Star, Layers,
 } from 'lucide-react';
 import { useApi } from './hooks/useApi';
 import * as api from './services/api-client';
@@ -14,6 +14,8 @@ import RecordingPage from './pages/RecordingPage';
 import OverlayPage from './pages/OverlayPage';
 import PresetsPage from './pages/PresetsPage';
 import SettingsPage from './pages/SettingsPage';
+import ScoringPage from './pages/ScoringPage';
+import DimensionsPage from './pages/DimensionsPage';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: '概览' },
@@ -22,6 +24,8 @@ const navItems = [
   { to: '/audio', icon: Mic, label: '音频控制台' },
   { to: '/recording', icon: Play, label: '录制' },
   { to: '/projects', icon: FolderKanban, label: '项目管理' },
+  { to: '/scoring', icon: Star, label: '产品评分' },
+  { to: '/dimensions', icon: Layers, label: '评分维度' },
   { to: '/overlay', icon: Monitor, label: '叠加层' },
   { to: '/presets', icon: List, label: '预设' },
   { to: '/settings', icon: Settings, label: '设置' },
@@ -69,6 +73,8 @@ function App() {
               <Route path="/recording" element={<RecordingPage />} />
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/products/:projectId" element={<ProductsPage />} />
+              <Route path="/scoring" element={<ScoringPage />} />
+              <Route path="/dimensions" element={<DimensionsPage />} />
               <Route path="/overlay" element={<OverlayPage />} />
               <Route path="/presets" element={<PresetsPage />} />
               <Route path="/settings" element={<SettingsPage />} />

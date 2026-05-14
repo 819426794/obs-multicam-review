@@ -1,6 +1,13 @@
 #include "plugin.h"
 #include "database/database.h"
 #include "webserver/webserver.h"
+#include "recorder/recorder.h"
+#include "filters/source_record_filter.h"
+#include "timecode/timecode_gen.h"
+#include "scene/scene_manager.h"
+#include "source/source_manager.h"
+#include "audio/audio_manager.h"
+#include "preset/preset_manager.h"
 #include <obs-module.h>
 #include <obs-frontend-api.h>
 #include <util/platform.h>
@@ -79,12 +86,79 @@ bool obs_module_load(void) {
         blog_error("Failed to get database path");
     }
 
-    // TODO: 初始化其他模块
-    // - 时间码生成器
-    // - 录制引擎
-    // - 场景管理器
-    // - 音频控制台
-    // - 预设管理器
+    // ---- 初始化时间码生成器 ----
+    try {
+        g_ctx->timecode = new multicam::TimecodeGen();
+        g_ctx->timecode->set_framerate(multicam::TimecodeGen::FrameRate::FPS_60);
+        blog_info("TimecodeGen initialized (60fps)");
+    } catch (const std::exception &e) {
+        blog_warn("Failed to initialize TimecodeGen: %s", e.what());
+    } catch (...) {
+        blog_warn("Failed to initialize TimecodeGen: unknown error");
+    }
+
+    // ---- 初始化录制引擎 ----
+    try {
+        g_ctx->recorder = new multicam::Recorder();
+        blog_info("Recorder initialized");
+    } catch (const std::exception &e) {
+        blog_warn("Failed to initialize Recorder: %s", e.what());
+    } catch (...) {
+        blog_warn("Failed to initialize Recorder: unknown error");
+    }
+
+    // ---- 初始化场景管理器 ----
+    try {
+        g_ctx->scenes = new multicam::SceneManager();
+        g_ctx->scenes->scan();
+        blog_info("SceneManager initialized");
+    } catch (const std::exception &e) {
+        blog_warn("Failed to initialize SceneManager: %s", e.what());
+    } catch (...) {
+        blog_warn("Failed to initialize SceneManager: unknown error");
+    }
+
+    // ---- 初始化源管理器 ----
+    try {
+        g_ctx->sources = new multicam::SourceManager();
+        g_ctx->sources->discover();
+        blog_info("SourceManager initialized");
+    } catch (const std::exception &e) {
+        blog_warn("Failed to initialize SourceManager: %s", e.what());
+    } catch (...) {
+        blog_warn("Failed to initialize SourceManager: unknown error");
+    }
+
+    // ---- 初始化音频管理器 ----
+    try {
+        g_ctx->audio = new multicam::AudioManager();
+        g_ctx->audio->tick();
+        blog_info("AudioManager initialized");
+    } catch (const std::exception &e) {
+        blog_warn("Failed to initialize AudioManager: %s", e.what());
+    } catch (...) {
+        blog_warn("Failed to initialize AudioManager: unknown error");
+    }
+
+    // ---- 初始化预设管理器 ----
+    try {
+        g_ctx->presets = new PresetManager();
+        char preset_dir[512];
+        if (os_get_config_path(preset_dir, sizeof(preset_dir),
+            "obs-studio/plugin_data/obs-multicam-review/presets") > 0) {
+            g_ctx->presets->init(preset_dir);
+            blog_info("PresetManager initialized: %s", preset_dir);
+        } else {
+            blog_warn("Failed to get preset directory path");
+        }
+    } catch (const std::exception &e) {
+        blog_warn("Failed to initialize PresetManager: %s", e.what());
+    } catch (...) {
+        blog_warn("Failed to initialize PresetManager: unknown error");
+    }
+
+    // ---- 注册 SourceRecordFilter 滤镜 ----
+    multicam::register_source_record_filter();
 
     blog_info("obs-multicam-review loaded successfully");
     return true;
@@ -94,6 +168,42 @@ void obs_module_unload(void) {
     blog_info("Unloading obs-multicam-review");
 
     if (g_ctx) {
+        // 销毁预设管理器
+        if (g_ctx->presets) {
+            delete g_ctx->presets;
+            g_ctx->presets = nullptr;
+        }
+
+        // 销毁音频管理器
+        if (g_ctx->audio) {
+            delete g_ctx->audio;
+            g_ctx->audio = nullptr;
+        }
+
+        // 销毁源管理器
+        if (g_ctx->sources) {
+            delete g_ctx->sources;
+            g_ctx->sources = nullptr;
+        }
+
+        // 销毁场景管理器
+        if (g_ctx->scenes) {
+            delete g_ctx->scenes;
+            g_ctx->scenes = nullptr;
+        }
+
+        // 销毁录制引擎
+        if (g_ctx->recorder) {
+            delete g_ctx->recorder;
+            g_ctx->recorder = nullptr;
+        }
+
+        // 销毁时间码生成器
+        if (g_ctx->timecode) {
+            delete g_ctx->timecode;
+            g_ctx->timecode = nullptr;
+        }
+
         // 销毁数据库
         if (g_ctx->database) {
             g_ctx->database->close();
@@ -112,6 +222,9 @@ void obs_module_unload(void) {
         bfree(g_ctx);
         g_ctx = nullptr;
     }
+
+    // 注销 SourceRecordFilter 滤镜
+    multicam::unregister_source_record_filter();
 
     blog_info("obs-multicam-review unloaded");
 }

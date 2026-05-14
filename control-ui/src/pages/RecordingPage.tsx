@@ -94,7 +94,7 @@ function ErrorState({ error }: { error: string }) {
 // ── 状态指示卡片 ──────────────────────────────────────
 
 function StatCard({ icon: Icon, label, value, color = 'text-slate-300' }: {
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: React.ComponentType<{ size?: number | string; className?: string }>;
   label: string;
   value: string;
   color?: string;

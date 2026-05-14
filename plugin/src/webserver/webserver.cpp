@@ -32,6 +32,8 @@ extern "C" {
 #include <chrono>
 #include <atomic>
 #include <ctime>
+#include <fstream>
+#include <filesystem>
 
 using json = nlohmann::json;
 
@@ -1276,7 +1278,950 @@ static int handle_settings(struct mg_connection *conn, void *cbdata) {
     return 200;
 }
 
+// ============ 静态文件服务 ============
+
+namespace fs = std::filesystem;
+
+// 根据文件扩展名获取 MIME type
+static std::string get_mime_type(const std::string &ext) {
+    if (ext == ".html" || ext == ".htm") return "text/html";
+    if (ext == ".css")  return "text/css";
+    if (ext == ".js" || ext == ".mjs")   return "application/javascript";
+    if (ext == ".json") return "application/json";
+    if (ext == ".png")  return "image/png";
+    if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+    if (ext == ".gif")  return "image/gif";
+    if (ext == ".svg")  return "image/svg+xml";
+    if (ext == ".ico")  return "image/x-icon";
+    if (ext == ".woff") return "font/woff";
+    if (ext == ".woff2") return "font/woff2";
+    if (ext == ".ttf")  return "font/ttf";
+    if (ext == ".eot")  return "font/eot";
+    if (ext == ".map")  return "application/json";
+    return "application/octet-stream";
+}
+
+// 路径穿越安全检查
+static bool is_safe_path(const std::string &relative_path) {
+    return relative_path.find("..") == std::string::npos &&
+           relative_path.find("\\") == std::string::npos;
+}
+
+// 读取文件并返回 HTTP 响应
+static int serve_file(struct mg_connection *conn, const std::string &file_path,
+                      const std::string &mime_type) {
+    // 检查文件存在
+    std::error_code ec;
+    if (!fs::exists(file_path, ec) || !fs::is_regular_file(file_path, ec)) {
+        mg_response_header_start(conn, 404);
+        mg_response_header_add(conn, "Content-Type", "text/plain", -1);
+        mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+        mg_response_header_send(conn);
+        mg_printf(conn, "404 Not Found");
+        return 404;
+    }
+
+    // 获取文件大小
+    auto file_size = fs::file_size(file_path, ec);
+    if (ec || file_size > 64 * 1024 * 1024) { // 64 MB 上限
+        mg_response_header_start(conn, 500);
+        mg_response_header_add(conn, "Content-Type", "text/plain", -1);
+        mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+        mg_response_header_send(conn);
+        mg_printf(conn, "500 File too large or unreadable");
+        return 500;
+    }
+
+    // 读取文件
+    std::ifstream ifs(file_path, std::ios::binary);
+    if (!ifs.is_open()) {
+        mg_response_header_start(conn, 500);
+        mg_response_header_add(conn, "Content-Type", "text/plain", -1);
+        mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+        mg_response_header_send(conn);
+        mg_printf(conn, "500 Internal Server Error");
+        return 500;
+    }
+
+    std::string content((std::istreambuf_iterator<char>(ifs)),
+                        std::istreambuf_iterator<char>());
+    ifs.close();
+
+    // 发送响应
+    mg_response_header_start(conn, 200);
+    mg_response_header_add(conn, "Content-Type", mime_type.c_str(), -1);
+    mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+    mg_response_header_add(conn, "Cache-Control", "public, max-age=3600", -1);
+    mg_response_header_send(conn);
+    mg_write(conn, content.c_str(), content.size());
+    return 200;
+}
+
+// 处理 / 请求 -> 返回控制台 UI index.html
+static int handle_static_index(struct mg_connection *conn, void *cbdata) {
+    (void)cbdata;
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    // 只处理 GET
+    if (strcmp(ri->request_method, "GET") != 0) {
+        mg_response_header_start(conn, 405);
+        mg_response_header_add(conn, "Content-Type", "text/plain", -1);
+        mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+        mg_response_header_send(conn);
+        mg_printf(conn, "405 Method Not Allowed");
+        return 405;
+    }
+
+    char web_path[512];
+    if (os_get_config_path(web_path, sizeof(web_path),
+        "obs-studio/data/obs-plugins/obs-multicam-review/web/index.html") <= 0) {
+        mg_response_header_start(conn, 500);
+        mg_response_header_add(conn, "Content-Type", "text/plain", -1);
+        mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+        mg_response_header_send(conn);
+        mg_printf(conn, "500 Failed to resolve web path");
+        return 500;
+    }
+
+    blog_debug("Serving index: %s", web_path);
+    return serve_file(conn, web_path, "text/html");
+}
+
+// 处理 /assets/* 请求
+static int handle_static_assets(struct mg_connection *conn, void *cbdata) {
+    (void)cbdata;
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (strcmp(ri->request_method, "GET") != 0) {
+        mg_response_header_start(conn, 405);
+        mg_response_header_add(conn, "Content-Type", "text/plain", -1);
+        mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+        mg_response_header_send(conn);
+        mg_printf(conn, "405 Method Not Allowed");
+        return 405;
+    }
+
+    // 提取 /assets/ 之后的路径
+    std::string uri = ri->local_uri;
+    std::string prefix = "/assets/";
+    if (uri.compare(0, prefix.size(), prefix) != 0) {
+        return 404;
+    }
+
+    std::string relative = uri.substr(prefix.size());
+    if (relative.empty()) {
+        return 404;
+    }
+
+    // 安全检查
+    if (!is_safe_path(relative)) {
+        blog_warn("Blocked path traversal attempt: %s", relative.c_str());
+        mg_response_header_start(conn, 403);
+        mg_response_header_add(conn, "Content-Type", "text/plain", -1);
+        mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+        mg_response_header_send(conn);
+        mg_printf(conn, "403 Forbidden");
+        return 403;
+    }
+
+    // 构造完整路径
+    char base_path[512];
+    if (os_get_config_path(base_path, sizeof(base_path),
+        "obs-studio/data/obs-plugins/obs-multicam-review/web") <= 0) {
+        return 500;
+    }
+
+    fs::path full_path = fs::path(base_path) / "assets" / relative;
+    std::string ext = full_path.extension().string();
+    std::string mime = get_mime_type(ext);
+
+    blog_debug("Serving asset: %s (%s)", full_path.string().c_str(), mime.c_str());
+    return serve_file(conn, full_path.string(), mime);
+}
+
+// 处理 /overlay/* 请求
+static int handle_static_overlay(struct mg_connection *conn, void *cbdata) {
+    (void)cbdata;
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+
+    if (strcmp(ri->request_method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (strcmp(ri->request_method, "GET") != 0) {
+        mg_response_header_start(conn, 405);
+        mg_response_header_add(conn, "Content-Type", "text/plain", -1);
+        mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+        mg_response_header_send(conn);
+        mg_printf(conn, "405 Method Not Allowed");
+        return 405;
+    }
+
+    // 提取 /overlay/ 之后的路径
+    std::string uri = ri->local_uri;
+    std::string prefix = "/overlay/";
+    if (uri.compare(0, prefix.size(), prefix) != 0) {
+        return 404;
+    }
+
+    std::string relative = uri.substr(prefix.size());
+
+    // 如果无文件名，默认返回 index.html
+    if (relative.empty()) {
+        relative = "index.html";
+    }
+
+    // 安全检查
+    if (!is_safe_path(relative)) {
+        blog_warn("Blocked path traversal attempt: %s", relative.c_str());
+        mg_response_header_start(conn, 403);
+        mg_response_header_add(conn, "Content-Type", "text/plain", -1);
+        mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+        mg_response_header_send(conn);
+        mg_printf(conn, "403 Forbidden");
+        return 403;
+    }
+
+    // 构造完整路径
+    char base_path[512];
+    if (os_get_config_path(base_path, sizeof(base_path),
+        "obs-studio/data/obs-plugins/obs-multicam-review/overlay") <= 0) {
+        return 500;
+    }
+
+    fs::path full_path = fs::path(base_path) / relative;
+    std::string ext = full_path.extension().string();
+    std::string mime = get_mime_type(ext);
+
+    blog_debug("Serving overlay: %s (%s)", full_path.string().c_str(), mime.c_str());
+    return serve_file(conn, full_path.string(), mime);
+}
+
+// ============ 数据库 API 通用辅助 ============
+
+// 从 query string 中提取参数值
+static std::string get_query_param(const struct mg_request_info *ri, const char *key) {
+    if (!ri || !ri->query_string) return "";
+    std::string qs(ri->query_string);
+    std::string search = std::string(key) + "=";
+    size_t pos = qs.find(search);
+    if (pos == std::string::npos) return "";
+    pos += search.size();
+    size_t end = qs.find('&', pos);
+    if (end == std::string::npos) return qs.substr(pos);
+    return qs.substr(pos, end - pos);
+}
+
+// 发送结构化错误 JSON (task spec 风格)
+static void send_json_error(struct mg_connection *conn, int status,
+                            const char *error_code, const char *message) {
+    mg_response_header_start(conn, status);
+    mg_response_header_add(conn, "Content-Type", "application/json", -1);
+    mg_response_header_add(conn, "Access-Control-Allow-Origin", "*", -1);
+    mg_response_header_add(conn, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS", -1);
+    mg_response_header_add(conn, "Access-Control-Allow-Headers", "Content-Type", -1);
+    mg_response_header_send(conn);
+    json body;
+    body["error"]["code"] = error_code;
+    body["error"]["message"] = message;
+    std::string body_str = body.dump();
+    mg_printf(conn, "%s", body_str.c_str());
+}
+
+// 检查 database 可用性，不可用时发送 500
+static bool check_database(struct mg_connection *conn, PluginContext *ctx) {
+    if (!ctx || !ctx->database) {
+        send_json_error(conn, 500, "ERR_DB_UNAVAILABLE", "Database not available");
+        return false;
+    }
+    return true;
+}
+
+// ============ 项目管理 (Projects) ============
+
+// GET /api/projects  → 项目列表
+// POST /api/projects → 创建项目
+static int handle_projects(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *method = ri->request_method;
+
+    if (strcmp(method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!check_database(conn, ctx)) return 500;
+    auto *db = ctx->database;
+
+    if (strcmp(method, "GET") == 0) {
+        // GET /api/projects → 返回项目列表
+        char *json_out = nullptr;
+        if (!db->project_list(&json_out)) {
+            send_json_error(conn, 500, "ERR_INTERNAL", "Database error");
+            return 500;
+        }
+        json resp;
+        resp["projects"] = json::parse(json_out);
+        resp_json(conn, resp);
+        free(json_out);
+        return 200;
+    }
+
+    if (strcmp(method, "POST") == 0) {
+        // POST /api/projects → 创建项目
+        std::string req_body = read_request_body(conn);
+        if (req_body.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing request body");
+            return 400;
+        }
+        try {
+            json req = json::parse(req_body);
+            std::string name = req.value("name", "");
+            if (name.empty()) {
+                send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing required field: name");
+                return 400;
+            }
+            req["id"] = gen_uuid();
+            std::string input = req.dump();
+            char *json_out = nullptr;
+            if (!db->project_create(input.c_str(), &json_out)) {
+                send_json_error(conn, 500, "ERR_INTERNAL", "Failed to create project");
+                return 500;
+            }
+            json resp = json::parse(json_out);
+            resp_json(conn, resp);
+            free(json_out);
+            return 200;
+        } catch (const json::parse_error &e) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                            (std::string("Invalid JSON: ") + e.what()).c_str());
+            return 400;
+        }
+    }
+
+    send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+    return 405;
+}
+
+// PUT    /api/projects/:id → 更新项目
+// DELETE /api/projects/:id → 删除项目
+// 通过前缀 /api/projects/ 匹配，手动提取 ID
+static int handle_projects_by_id(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *method = ri->request_method;
+
+    if (strcmp(method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!check_database(conn, ctx)) return 500;
+    auto *db = ctx->database;
+
+    // 从 URI 提取 project ID: /api/projects/{id}
+    const char *uri = ri->request_uri;
+    std::string id = std::string(uri).substr(strlen("/api/projects/"));
+    // 去掉可能的尾部斜杠和 query string
+    size_t qpos = id.find('?');
+    if (qpos != std::string::npos) id = id.substr(0, qpos);
+    while (!id.empty() && id.back() == '/') id.pop_back();
+    if (id.empty()) {
+        send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing project ID");
+        return 400;
+    }
+
+    if (strcmp(method, "PUT") == 0) {
+        std::string req_body = read_request_body(conn);
+        if (req_body.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing request body");
+            return 400;
+        }
+        try {
+            json req = json::parse(req_body);
+            if (!db->project_update(id.c_str(), req_body.c_str())) {
+                send_json_error(conn, 500, "ERR_INTERNAL", "Failed to update project");
+                return 500;
+            }
+            // 返回更新后的项目
+            char *json_out = nullptr;
+            if (db->project_get(id.c_str(), &json_out)) {
+                json resp = json::parse(json_out);
+                resp_json(conn, resp);
+                free(json_out);
+            } else {
+                resp_ok(conn);
+            }
+            return 200;
+        } catch (const json::parse_error &e) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                            (std::string("Invalid JSON: ") + e.what()).c_str());
+            return 400;
+        }
+    }
+
+    if (strcmp(method, "DELETE") == 0) {
+        if (!db->project_delete(id.c_str())) {
+            send_json_error(conn, 500, "ERR_INTERNAL", "Failed to delete project");
+            return 500;
+        }
+        resp_ok(conn);
+        return 200;
+    }
+
+    send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+    return 405;
+}
+
+// ============ 产品管理 (Products) ============
+
+// GET  /api/products?projectId=xxx → 产品列表
+// POST /api/products              → 创建产品
+static int handle_products(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *method = ri->request_method;
+
+    if (strcmp(method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!check_database(conn, ctx)) return 500;
+    auto *db = ctx->database;
+
+    if (strcmp(method, "GET") == 0) {
+        // GET /api/products?projectId=xxx
+        std::string project_id = get_query_param(ri, "projectId");
+        if (project_id.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing query parameter: projectId");
+            return 400;
+        }
+        char *json_out = nullptr;
+        if (!db->product_list(project_id.c_str(), &json_out)) {
+            send_json_error(conn, 500, "ERR_INTERNAL", "Database error");
+            return 500;
+        }
+        json resp;
+        resp["products"] = json::parse(json_out);
+        resp_json(conn, resp);
+        free(json_out);
+        return 200;
+    }
+
+    if (strcmp(method, "POST") == 0) {
+        // POST /api/products → 创建产品
+        std::string req_body = read_request_body(conn);
+        if (req_body.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing request body");
+            return 400;
+        }
+        try {
+            json req = json::parse(req_body);
+            std::string project_id = req.value("projectId", "");
+            if (project_id.empty()) {
+                send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing required field: projectId");
+                return 400;
+            }
+            std::string input = req.dump();
+            char *json_out = nullptr;
+            if (!db->product_create(project_id.c_str(), input.c_str(), &json_out)) {
+                send_json_error(conn, 500, "ERR_INTERNAL", "Failed to create product");
+                return 500;
+            }
+            json resp = json::parse(json_out);
+            resp_json(conn, resp);
+            free(json_out);
+            return 200;
+        } catch (const json::parse_error &e) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                            (std::string("Invalid JSON: ") + e.what()).c_str());
+            return 400;
+        }
+    }
+
+    send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+    return 405;
+}
+
+// PUT    /api/products/reorder → 重新排序
+// PUT    /api/products/:id     → 更新产品
+// DELETE /api/products/:id     → 删除产品
+// GET    /api/products/:id/dimension-template → 获取产品绑定的维度模板
+// PUT    /api/products/:id/dimension-template → 绑定维度模板
+// 通过前缀 /api/products/ 匹配，手动解析路径
+static int handle_products_by_path(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *method = ri->request_method;
+
+    if (strcmp(method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!check_database(conn, ctx)) return 500;
+    auto *db = ctx->database;
+
+    // 解析路径: /api/products/{rest}
+    const char *uri = ri->request_uri;
+    std::string rest = std::string(uri).substr(strlen("/api/products/"));
+    // 去掉 query string
+    size_t qpos = rest.find('?');
+    if (qpos != std::string::npos) rest = rest.substr(0, qpos);
+
+    // /api/products/reorder
+    if (rest == "reorder") {
+        if (strcmp(method, "PUT") != 0) {
+            send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+            return 405;
+        }
+        std::string req_body = read_request_body(conn);
+        if (req_body.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing request body");
+            return 400;
+        }
+        try {
+            json req = json::parse(req_body);
+            std::string project_id = req.value("projectId", "");
+            if (project_id.empty()) {
+                send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing required field: projectId");
+                return 400;
+            }
+            std::string ids_json = req["ids"].dump();
+            if (!db->product_reorder(project_id.c_str(), ids_json.c_str())) {
+                send_json_error(conn, 500, "ERR_INTERNAL", "Failed to reorder products");
+                return 500;
+            }
+            resp_ok(conn);
+            return 200;
+        } catch (const json::parse_error &e) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                            (std::string("Invalid JSON: ") + e.what()).c_str());
+            return 400;
+        }
+    }
+
+    // /api/products/{id}/dimension-template
+    size_t dim_pos = rest.find("/dimension-template");
+    if (dim_pos != std::string::npos) {
+        std::string product_id = rest.substr(0, dim_pos);
+        if (product_id.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing product ID");
+            return 400;
+        }
+
+        if (strcmp(method, "PUT") == 0) {
+            // PUT /api/products/:id/dimension-template → 绑定维度模板
+            std::string req_body = read_request_body(conn);
+            if (req_body.empty()) {
+                send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing request body");
+                return 400;
+            }
+            try {
+                json req = json::parse(req_body);
+                std::string template_id = req.value("templateId", "");
+                if (template_id.empty()) {
+                    send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing required field: templateId");
+                    return 400;
+                }
+                if (!db->binding_set(product_id.c_str(), template_id.c_str())) {
+                    send_json_error(conn, 500, "ERR_INTERNAL", "Failed to bind dimension template");
+                    return 500;
+                }
+                resp_ok(conn);
+                return 200;
+            } catch (const json::parse_error &e) {
+                send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                                (std::string("Invalid JSON: ") + e.what()).c_str());
+                return 400;
+            }
+        }
+
+        if (strcmp(method, "GET") == 0) {
+            // GET /api/products/:id/dimension-template → 获取绑定的维度模板
+            char *json_out = nullptr;
+            if (!db->binding_get(product_id.c_str(), &json_out)) {
+                send_json_error(conn, 500, "ERR_INTERNAL", "Failed to get dimension binding");
+                return 500;
+            }
+            json resp = json::parse(json_out);
+            resp_json(conn, resp);
+            free(json_out);
+            return 200;
+        }
+
+        send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+        return 405;
+    }
+
+    // /api/products/{id} → update / delete
+    std::string product_id = rest;
+    while (!product_id.empty() && product_id.back() == '/') product_id.pop_back();
+    if (product_id.empty()) {
+        send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing product ID");
+        return 400;
+    }
+
+    if (strcmp(method, "PUT") == 0) {
+        std::string req_body = read_request_body(conn);
+        if (req_body.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing request body");
+            return 400;
+        }
+        try {
+            json::parse(req_body); // validate JSON
+            if (!db->product_update(product_id.c_str(), req_body.c_str())) {
+                send_json_error(conn, 500, "ERR_INTERNAL", "Failed to update product");
+                return 500;
+            }
+            // 返回更新后的产品
+            char *json_out = nullptr;
+            if (db->product_get(product_id.c_str(), &json_out)) {
+                json resp = json::parse(json_out);
+                resp_json(conn, resp);
+                free(json_out);
+            } else {
+                resp_ok(conn);
+            }
+            return 200;
+        } catch (const json::parse_error &e) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                            (std::string("Invalid JSON: ") + e.what()).c_str());
+            return 400;
+        }
+    }
+
+    if (strcmp(method, "DELETE") == 0) {
+        if (!db->product_delete(product_id.c_str())) {
+            send_json_error(conn, 500, "ERR_INTERNAL", "Failed to delete product");
+            return 500;
+        }
+        resp_ok(conn);
+        return 200;
+    }
+
+    send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+    return 405;
+}
+
+// ============ 评分维度模板 (Dimension Templates) ============
+
+// GET    /api/dimensions/templates    → 列出所有模板
+// POST   /api/dimensions/templates    → 创建模板
+// DELETE /api/dimensions/templates/:id → 删除模板 (通过前缀匹配)
+static int handle_dim_templates(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *method = ri->request_method;
+
+    if (strcmp(method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!check_database(conn, ctx)) return 500;
+    auto *db = ctx->database;
+
+    if (strcmp(method, "GET") == 0) {
+        // GET /api/dimensions/templates → 列出模板
+        char *json_out = nullptr;
+        if (!db->dim_template_list(&json_out)) {
+            send_json_error(conn, 500, "ERR_INTERNAL", "Database error");
+            return 500;
+        }
+        json resp;
+        resp["templates"] = json::parse(json_out);
+        resp_json(conn, resp);
+        free(json_out);
+        return 200;
+    }
+
+    if (strcmp(method, "POST") == 0) {
+        // POST /api/dimensions/templates → 创建模板
+        std::string req_body = read_request_body(conn);
+        if (req_body.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing request body");
+            return 400;
+        }
+        try {
+            json req = json::parse(req_body);
+            std::string name = req.value("name", "");
+            if (name.empty()) {
+                send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing required field: name");
+                return 400;
+            }
+            char *json_out = nullptr;
+            if (!db->dim_template_create(req_body.c_str(), &json_out)) {
+                send_json_error(conn, 500, "ERR_INTERNAL", "Failed to create template");
+                return 500;
+            }
+            json resp = json::parse(json_out);
+            resp_json(conn, resp);
+            free(json_out);
+            return 200;
+        } catch (const json::parse_error &e) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                            (std::string("Invalid JSON: ") + e.what()).c_str());
+            return 400;
+        }
+    }
+
+    // DELETE /api/dimensions/templates/:id → 检查是否有路径片段
+    const char *uri = ri->request_uri;
+    std::string rest = std::string(uri).substr(strlen("/api/dimensions/templates/"));
+    size_t qpos = rest.find('?');
+    if (qpos != std::string::npos) rest = rest.substr(0, qpos);
+    while (!rest.empty() && rest.back() == '/') rest.pop_back();
+
+    if (!rest.empty() && strcmp(method, "DELETE") == 0) {
+        // DELETE /api/dimensions/templates/:id
+        if (!db->dim_template_delete(rest.c_str())) {
+            send_json_error(conn, 500, "ERR_INTERNAL", "Failed to delete template");
+            return 500;
+        }
+        resp_ok(conn);
+        return 200;
+    }
+
+    send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+    return 405;
+}
+
+// ============ 评分会话 (Scoring Sessions) ============
+
+// POST /api/scoring/sessions          → 创建评分会话
+// GET  /api/scoring/sessions/:id       → 获取会话详情
+// POST /api/scoring/sessions/:id/complete → 完成会话
+static int handle_scoring_sessions(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *method = ri->request_method;
+
+    if (strcmp(method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!check_database(conn, ctx)) return 500;
+    auto *db = ctx->database;
+
+    const char *uri = ri->request_uri;
+
+    // POST /api/scoring/sessions → 创建会话 (精确匹配基础路径)
+    if (strcmp(uri, "/api/scoring/sessions") == 0 && strcmp(method, "POST") == 0) {
+        std::string req_body = read_request_body(conn);
+        if (req_body.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing request body");
+            return 400;
+        }
+        try {
+            json req = json::parse(req_body);
+            std::string project_id = req.value("projectId", "");
+            if (project_id.empty()) {
+                send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing required field: projectId");
+                return 400;
+            }
+            char *json_out = nullptr;
+            if (!db->scoring_session_create(req_body.c_str(), &json_out)) {
+                send_json_error(conn, 500, "ERR_INTERNAL", "Failed to create scoring session");
+                return 500;
+            }
+            json resp = json::parse(json_out);
+            resp_json(conn, resp);
+            free(json_out);
+            return 200;
+        } catch (const json::parse_error &e) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                            (std::string("Invalid JSON: ") + e.what()).c_str());
+            return 400;
+        }
+    }
+
+    // 带有子路径的: /api/scoring/sessions/{id}[/complete]
+    std::string rest = std::string(uri).substr(strlen("/api/scoring/sessions/"));
+    size_t qpos = rest.find('?');
+    if (qpos != std::string::npos) rest = rest.substr(0, qpos);
+
+    if (rest.empty()) {
+        send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+        return 405;
+    }
+
+    // 检查是否以 /complete 结尾
+    size_t complete_pos = rest.rfind("/complete");
+    bool is_complete = (complete_pos != std::string::npos && complete_pos == rest.size() - strlen("/complete"));
+    std::string session_id;
+    if (is_complete) {
+        session_id = rest.substr(0, complete_pos);
+    } else {
+        session_id = rest;
+    }
+    while (!session_id.empty() && session_id.back() == '/') session_id.pop_back();
+
+    if (session_id.empty()) {
+        send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing session ID");
+        return 400;
+    }
+
+    if (is_complete && strcmp(method, "POST") == 0) {
+        // POST /api/scoring/sessions/:id/complete
+        if (!db->scoring_session_complete(session_id.c_str())) {
+            send_json_error(conn, 500, "ERR_INTERNAL", "Failed to complete scoring session");
+            return 500;
+        }
+        resp_ok(conn);
+        return 200;
+    }
+
+    if (!is_complete && strcmp(method, "GET") == 0) {
+        // GET /api/scoring/sessions/:id
+        char *json_out = nullptr;
+        if (!db->scoring_session_get(session_id.c_str(), &json_out)) {
+            send_json_error(conn, 500, "ERR_INTERNAL", "Failed to get scoring session");
+            return 500;
+        }
+        json resp = json::parse(json_out);
+        resp_json(conn, resp);
+        free(json_out);
+        return 200;
+    }
+
+    send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+    return 405;
+}
+
+// ============ 评分提交 & 排行榜 ============
+
+// POST /api/scoring/scores → 提交评分
+// GET  /api/scoring/scores?sessionId=x&productId=y → 查询评分
+static int handle_scoring_scores(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *method = ri->request_method;
+
+    if (strcmp(method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!check_database(conn, ctx)) return 500;
+    auto *db = ctx->database;
+
+    if (strcmp(method, "POST") == 0) {
+        // POST /api/scoring/scores → 提交评分
+        std::string req_body = read_request_body(conn);
+        if (req_body.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing request body");
+            return 400;
+        }
+        try {
+            json req = json::parse(req_body);
+            std::string session_id = req.value("sessionId", "");
+            std::string product_id = req.value("productId", "");
+            std::string dim_key = req.value("dimKey", "");
+            double score = req.value("score", -1.0);
+            std::string note = req.value("note", "");
+
+            if (session_id.empty() || product_id.empty() || dim_key.empty() || score < 0) {
+                send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                                "Missing required fields: sessionId, productId, dimKey, score");
+                return 400;
+            }
+            if (!db->score_submit(session_id.c_str(), product_id.c_str(),
+                                  dim_key.c_str(), score, note.c_str())) {
+                send_json_error(conn, 500, "ERR_INTERNAL", "Failed to submit score");
+                return 500;
+            }
+            resp_ok(conn);
+            return 200;
+        } catch (const json::parse_error &e) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                            (std::string("Invalid JSON: ") + e.what()).c_str());
+            return 400;
+        }
+    }
+
+    if (strcmp(method, "GET") == 0) {
+        // GET /api/scoring/scores?sessionId=x&productId=y
+        std::string session_id = get_query_param(ri, "sessionId");
+        std::string product_id = get_query_param(ri, "productId");
+        if (session_id.empty() || product_id.empty()) {
+            send_json_error(conn, 400, "ERR_BAD_REQUEST",
+                            "Missing query parameters: sessionId and productId");
+            return 400;
+        }
+        char *json_out = nullptr;
+        if (!db->score_get_by_product(session_id.c_str(), product_id.c_str(), &json_out)) {
+            send_json_error(conn, 500, "ERR_INTERNAL", "Failed to get scores");
+            return 500;
+        }
+        json resp;
+        resp["scores"] = json::parse(json_out);
+        resp_json(conn, resp);
+        free(json_out);
+        return 200;
+    }
+
+    send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+    return 405;
+}
+
+// GET /api/scoring/leaderboard?sessionId=x → 排行榜
+static int handle_leaderboard(struct mg_connection *conn, void *cbdata) {
+    PluginContext *ctx = static_cast<PluginContext *>(cbdata);
+    const struct mg_request_info *ri = mg_get_request_info(conn);
+    const char *method = ri->request_method;
+
+    if (strcmp(method, "OPTIONS") == 0) {
+        send_cors_preflight(conn);
+        return 200;
+    }
+
+    if (!check_database(conn, ctx)) return 500;
+    auto *db = ctx->database;
+
+    if (strcmp(method, "GET") != 0) {
+        send_json_error(conn, 405, "ERR_METHOD", "Method not allowed");
+        return 405;
+    }
+
+    std::string session_id = get_query_param(ri, "sessionId");
+    if (session_id.empty()) {
+        send_json_error(conn, 400, "ERR_BAD_REQUEST", "Missing query parameter: sessionId");
+        return 400;
+    }
+
+    char *json_out = nullptr;
+    if (!db->score_get_leaderboard(session_id.c_str(), &json_out)) {
+        send_json_error(conn, 500, "ERR_INTERNAL", "Failed to get leaderboard");
+        return 500;
+    }
+    json resp;
+    resp["leaderboard"] = json::parse(json_out);
+    resp_json(conn, resp);
+    free(json_out);
+    return 200;
+}
+
 // ============ WebSocket 处理器 ============
+
+// 前向声明（定义在 ws_close_handler 之后）
+static void ws_send(struct mg_connection *conn, const std::string &action,
+                    const json &payload, const std::string &msg_id = "");
+static void ws_broadcast_event(const std::string &action, const json &payload);
 
 static int ws_connect_handler(const struct mg_connection *conn, void *cbdata) {
     (void)conn;
@@ -1363,31 +2308,144 @@ static int ws_data_handler(struct mg_connection *conn, int flags,
         return 1;
     }
 
-    // 处理 §4.4 指令（当前阶段打印日志 + 返回 system.status）
-    blog_info("WS command: %s (Phase 1: mock response)", action.c_str());
+    // ============ 指令处理 ============
+    blog_info("[ws] command: %s", action.c_str());
 
-    // 构建 system.status 响应
-    const char *rec_state = "idle";
-    if (ctx && ctx->recording_active) {
-        rec_state = "recording";
+    // rec.start → 启动录制
+    if (action == "rec.start") {
+        if (!ctx || !ctx->recorder) {
+            ws_send(conn, "rec.start", {{"error", "recorder not available"}}, msg_id);
+            return 1;
+        }
+        std::string output_dir = msg.value("payload", json::object()).value("outputDir",
+            std::string(getenv("USERPROFILE") ? getenv("USERPROFILE") : ".") + "\\Recordings");
+        bool ok = ctx->recorder->start(output_dir, "", true);
+        if (ok) {
+            auto st = ctx->recorder->status_json();
+            ws_send(conn, "rec.start", st, msg_id);
+            ws_broadcast_event("recording.started", st);
+        } else {
+            ws_send(conn, "rec.start", {{"error", "Failed to start recording"}}, msg_id);
+        }
+        return 1;
     }
 
-    json status_payload;
-    status_payload["pluginVersion"] = PLUGIN_VERSION;
-    status_payload["obsVersion"] = "30.2.0";
-    status_payload["recordingState"] = rec_state;
-    status_payload["currentScene"] = "main_full";
-    status_payload["timecode"] = "00:00:00:00";
-    status_payload["fps"] = 60;
-    status_payload["diskFreeBytes"] = 262144000000LL;
-    status_payload["cpuUsage"] = 12.5;
-    status_payload["memoryUsageMB"] = 256;
+    // rec.stop
+    if (action == "rec.stop") {
+        if (!ctx || !ctx->recorder) {
+            ws_send(conn, "rec.stop", {{"error", "recorder not available"}}, msg_id);
+            return 1;
+        }
+        bool ok = ctx->recorder->stop();
+        auto st = ctx->recorder->status_json();
+        if (ok) {
+            ws_send(conn, "rec.stop", st, msg_id);
+            ws_broadcast_event("recording.stopped", st);
+        } else {
+            ws_send(conn, "rec.stop", {{"error", "Not recording"}}, msg_id);
+        }
+        return 1;
+    }
 
-    // 如果是 request，返回 response；否则返回 event
-    std::string resp_type = (msg_type == "request") ? "response" : "event";
-    json env = build_envelope(resp_type, "system.status", status_payload, msg_id);
-    std::string resp_str = env.dump();
-    mg_websocket_write(conn, MG_WEBSOCKET_OPCODE_TEXT, resp_str.c_str(), resp_str.size());
+    // rec.pause
+    if (action == "rec.pause") {
+        if (!ctx || !ctx->recorder) {
+            ws_send(conn, "rec.pause", {{"error", "recorder not available"}}, msg_id);
+            return 1;
+        }
+        ctx->recorder->pause();
+        json payload = {{"recordingId", ctx->recorder->status().recording_id}};
+        ws_send(conn, "rec.pause", payload, msg_id);
+        ws_broadcast_event("recording.paused", payload);
+        return 1;
+    }
+
+    // rec.resume
+    if (action == "rec.resume") {
+        if (!ctx || !ctx->recorder) {
+            ws_send(conn, "rec.resume", {{"error", "recorder not available"}}, msg_id);
+            return 1;
+        }
+        ctx->recorder->resume();
+        json payload = {{"recordingId", ctx->recorder->status().recording_id}};
+        ws_send(conn, "rec.resume", payload, msg_id);
+        ws_broadcast_event("recording.resumed", payload);
+        return 1;
+    }
+
+    // scene.switch
+    if (action == "scene.switch") {
+        std::string scene_name = msg["payload"].value("sceneName", "");
+        if (!ctx || !ctx->scenes || scene_name.empty()) {
+            ws_send(conn, "scene.switch",
+                {{"error", scene_name.empty() ? "missing sceneName" : "scene_manager not available"}}, msg_id);
+            return 1;
+        }
+        bool ok = ctx->scenes->switch_to(scene_name);
+        json payload = {{"sceneName", scene_name}, {"success", ok}};
+        ws_send(conn, "scene.switch", payload, msg_id);
+        if (ok) ws_broadcast_event("scene.changed", payload);
+        return 1;
+    }
+
+    // marker.add
+    if (action == "marker.add") {
+        std::string name = msg["payload"].value("name", "Marker");
+        json payload;
+        payload["id"] = gen_uuid();
+        payload["name"] = name;
+        payload["timecode"] = ctx && ctx->timecode ? ctx->timecode->smpte() : "00:00:00:00";
+        payload["timestamp"] = get_iso8601_timestamp();
+        ws_send(conn, "marker.add", payload, msg_id);
+        ws_broadcast_event("marker.added", payload);
+        return 1;
+    }
+
+    // preset.load
+    if (action == "preset.load") {
+        std::string preset_id = msg["payload"].value("presetId", "");
+        if (!ctx || !ctx->presets || preset_id.empty()) {
+            ws_send(conn, "preset.load",
+                {{"error", preset_id.empty() ? "missing presetId" : "preset_manager not available"}}, msg_id);
+            return 1;
+        }
+        bool ok = ctx->presets->load(preset_id);
+        json payload;
+        payload["loaded"] = ok;
+        payload["presetId"] = preset_id;
+        ws_send(conn, "preset.load", payload, msg_id);
+        return 1;
+    }
+
+    // source.show
+    if (action == "source.show") {
+        std::string src_name = msg["payload"].value("sourceName", "");
+        if (!ctx || !ctx->sources || src_name.empty()) {
+            ws_send(conn, "source.show",
+                {{"error", src_name.empty() ? "missing sourceName" : "source_manager not available"}}, msg_id);
+            return 1;
+        }
+        ctx->sources->show(src_name);
+        ws_send(conn, "source.show", {{"sourceName", src_name}, {"ok", true}}, msg_id);
+        return 1;
+    }
+
+    // source.hide
+    if (action == "source.hide") {
+        std::string src_name = msg["payload"].value("sourceName", "");
+        if (!ctx || !ctx->sources || src_name.empty()) {
+            ws_send(conn, "source.hide",
+                {{"error", src_name.empty() ? "missing sourceName" : "source_manager not available"}}, msg_id);
+            return 1;
+        }
+        ctx->sources->hide(src_name);
+        ws_send(conn, "source.hide", {{"sourceName", src_name}, {"ok", true}}, msg_id);
+        return 1;
+    }
+
+    // 未识别的指令
+    blog_warn("[ws] unknown command: %s", action.c_str());
+    ws_send(conn, action, {{"error", "unknown command: " + action}}, msg_id);
 
     return 1; // keep alive
 }
@@ -1403,50 +2461,76 @@ static void ws_close_handler(const struct mg_connection *conn, void *cbdata) {
     blog_info("WebSocket client disconnected");
 }
 
+// ============ 广播函数 ============
+
+// 向所有活跃 WebSocket 客户端广播事件
+static void ws_broadcast_event(const std::string &action, const json &payload) {
+    json env = build_envelope("event", action, payload);
+    std::string msg = env.dump();
+
+    std::lock_guard<std::mutex> lock(g_ws_mutex);
+    for (auto &pair : g_ws_sessions) {
+        if (pair.second.active) {
+            mg_websocket_write(pair.second.conn,
+                MG_WEBSOCKET_OPCODE_TEXT, msg.c_str(), msg.size());
+        }
+    }
+}
+
+// 向单个客户端发送消息
+static void ws_send(struct mg_connection *conn, const std::string &action,
+                    const json &payload, const std::string &msg_id = "") {
+    std::string type = msg_id.empty() ? "event" : "response";
+    json env = build_envelope(type, action, payload, msg_id);
+    std::string msg = env.dump();
+    mg_websocket_write(conn, MG_WEBSOCKET_OPCODE_TEXT, msg.c_str(), msg.size());
+}
+
 // ============ 心跳线程 ============
 
 static void heartbeat_thread_func() {
-    blog_info("Heartbeat thread started");
+    blog_info("Tick thread started");
+
+    auto last_heartbeat = std::chrono::steady_clock::now();
 
     while (g_heartbeat_running.load()) {
-        std::this_thread::sleep_for(std::chrono::seconds(15));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-        std::lock_guard<std::mutex> lock(g_ws_mutex);
-        time_t now = time(nullptr);
+        auto now = std::chrono::steady_clock::now();
 
-        auto it = g_ws_sessions.begin();
-        while (it != g_ws_sessions.end()) {
-            auto &session = it->second;
-            time_t elapsed = now - session.last_pong;
+        // 心跳每 15 秒
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat).count() >= 15) {
+            last_heartbeat = now;
 
-            if (elapsed > kWebSocketTimeoutSec) {
-                // 超时，关闭连接
-                blog_warn("WS client timeout (%llds since last pong), closing",
-                          static_cast<long long>(elapsed));
-                session.active = false;
-                mg_websocket_write(session.conn,
-                                   MG_WEBSOCKET_OPCODE_CONNECTION_CLOSE,
-                                   nullptr, 0);
-                it = g_ws_sessions.erase(it);
-            } else {
-                // 发送心跳
-                json heartbeat;
-                heartbeat["type"] = "event";
-                heartbeat["id"] = gen_uuid();
-                heartbeat["action"] = "system.heartbeat";
-                heartbeat["payload"] = json::object();
-                heartbeat["timestamp"] = get_iso8601_timestamp();
-
-                std::string hb_str = heartbeat.dump();
-                mg_websocket_write(session.conn,
-                                   MG_WEBSOCKET_OPCODE_TEXT,
-                                   hb_str.c_str(), hb_str.size());
-                ++it;
+            std::lock_guard<std::mutex> lock(g_ws_mutex);
+            time_t t_now = time(nullptr);
+            for (auto it = g_ws_sessions.begin(); it != g_ws_sessions.end(); ) {
+                auto &session = it->second;
+                time_t elapsed = t_now - session.last_pong;
+                if (elapsed > kWebSocketTimeoutSec) {
+                    blog_warn("WS timeout, closing");
+                    session.active = false;
+                    mg_websocket_write(session.conn, MG_WEBSOCKET_OPCODE_CONNECTION_CLOSE, nullptr, 0);
+                    it = g_ws_sessions.erase(it);
+                } else {
+                    json hb = build_envelope("event", "system.heartbeat", json::object());
+                    std::string hb_str = hb.dump();
+                    mg_websocket_write(session.conn, MG_WEBSOCKET_OPCODE_TEXT, hb_str.c_str(), hb_str.size());
+                    ++it;
+                }
             }
+        }
+
+        // 时间码广播每 100ms (录制中才发)
+        if (g_ctx && g_ctx->recording_active && g_ctx->timecode) {
+            json tc;
+            tc["timecode"] = g_ctx->timecode->smpte();
+            tc["frameIndex"] = g_ctx->timecode->frame_number();
+            ws_broadcast_event("timecode.tick", tc);
         }
     }
 
-    blog_info("Heartbeat thread stopped");
+    blog_info("Tick thread stopped");
 }
 
 // ============ 公开接口 ============
@@ -1576,7 +2660,51 @@ bool ws_start(PluginContext *ctx) {
     mg_set_request_handler(ctx->web_server->ctx, "/api/settings",
                            handle_settings, ctx);
 
-    blog_info("Registered %d REST routes", 37);
+    // ============ 数据库 API 路由 ============
+
+    // 项目管理
+    mg_set_request_handler(ctx->web_server->ctx, "/api/projects",
+                           handle_projects, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/projects/",
+                           handle_projects_by_id, ctx);
+
+    // 产品管理
+    mg_set_request_handler(ctx->web_server->ctx, "/api/products",
+                           handle_products, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/products/",
+                           handle_products_by_path, ctx);
+
+    // 评分维度模板
+    mg_set_request_handler(ctx->web_server->ctx, "/api/dimensions/templates",
+                           handle_dim_templates, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/dimensions/templates/",
+                           handle_dim_templates, ctx);
+
+    // 评分会话
+    mg_set_request_handler(ctx->web_server->ctx, "/api/scoring/sessions",
+                           handle_scoring_sessions, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/api/scoring/sessions/",
+                           handle_scoring_sessions, ctx);
+
+    // 评分提交
+    mg_set_request_handler(ctx->web_server->ctx, "/api/scoring/scores",
+                           handle_scoring_scores, ctx);
+
+    // 排行榜
+    mg_set_request_handler(ctx->web_server->ctx, "/api/scoring/leaderboard",
+                           handle_leaderboard, ctx);
+
+    // 静态文件服务 - 控制台 UI
+    mg_set_request_handler(ctx->web_server->ctx, "/",
+                           handle_static_index, ctx);
+    mg_set_request_handler(ctx->web_server->ctx, "/assets/",
+                           handle_static_assets, ctx);
+
+    // 静态文件服务 - 叠加层
+    mg_set_request_handler(ctx->web_server->ctx, "/overlay/",
+                           handle_static_overlay, ctx);
+
+    blog_info("Registered %d REST routes + 3 static file routes", 47);
 
     // 注册 WebSocket
     mg_set_websocket_handler(ctx->web_server->ctx, "/ws",

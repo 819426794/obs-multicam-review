@@ -230,6 +230,7 @@ export interface DimensionTemplate {
   name: string;
   isBuiltin: boolean;
   createdAt: string;
+  items?: DimensionItem[];
 }
 
 export interface DimensionItem {

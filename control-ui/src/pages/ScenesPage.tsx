@@ -294,7 +294,7 @@ export default function ScenesPage() {
                         </span>
                       )}
                       {scene.isBuiltin && (
-                        <Lock size={11} className="text-slate-500 shrink-0" title="内置场景" />
+                        <span title="内置场景"><Lock size={11} className="text-slate-500 shrink-0" /></span>
                       )}
                     </div>
 

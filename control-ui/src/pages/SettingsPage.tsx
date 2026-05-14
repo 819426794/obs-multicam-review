@@ -64,7 +64,7 @@ function ErrorState({ error }: { error: string }) {
 // ── 设置区块 ──────────────────────────────────────────
 
 interface SectionProps {
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: React.ComponentType<{ size?: number | string; className?: string }>;
   title: string;
   children: React.ReactNode;
 }

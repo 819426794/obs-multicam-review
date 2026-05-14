@@ -275,6 +275,13 @@ export function fetchProductDimTemplate(productId: string) {
 
 // ============ 评分会话 ============
 
+export function fetchScoringSessions(projectId?: string) {
+  const qs = projectId
+    ? `?${new URLSearchParams({ projectId })}`
+    : '';
+  return request<{ sessions: T.ScoringSession[] }>('GET', `/scoring/sessions${qs}`);
+}
+
 export function createScoringSession(body: T.ScoringSessionCreateRequest) {
   return request<T.ScoringSession>('POST', '/scoring/sessions', body);
 }

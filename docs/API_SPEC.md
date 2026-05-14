@@ -1,6 +1,6 @@
 # API 接口规范 — obs-multicam-review
 
-> **版本**: v0.1.0 | **协议**: REST + WebSocket | **消息格式**: JSON  
+> **版本**: v0.2.0 | **协议**: REST + WebSocket | **消息格式**: JSON  
 > ⚠️ **此文档是前后端接口的唯一真理源。新增/修改接口必须先更新本文档。**
 
 ---
@@ -443,38 +443,169 @@ ws://localhost:9527/ws
 
 ### 4.3 事件（插件 → 客户端）
 
-| action | 触发时机 | payload |
-|--------|---------|---------|
-| `recording.started` | 录制开始 | `recordingId`, `startTime`, `outputDir` |
-| `recording.stopped` | 录制停止 | `recordingId`, `duration`, `files[]` |
-| `recording.paused` | 录制暂停 | `recordingId` |
-| `recording.resumed` | 录制恢复 | `recordingId` |
-| `timecode.tick` | 每帧（60fps） | `timecode`, `frameIndex`, `fps` |
-| `source.status` | 源状态变化 | `sourceId`, `active`, `resolution`, `fps`, `audioLevel` |
-| `source.added` | 新输入源加入 | 完整源对象 |
-| `source.removed` | 输入源移除 | `sourceId` |
-| `marker.added` | 新标记 | 完整标记对象 |
-| `scene.changed` | 场景切换 | `sceneName` |
-| `audio.level` | 音频电平（10Hz） | `sourceId`, `levels[]` |
-| `system.status` | 连接建立时 | 完整系统状态 |
-| `system.heartbeat` | 每 15 秒 | `{}` |
-| `system.error` | 运行错误 | `code`, `message` |
+| action | 触发时机 | 间隔 | payload |
+|--------|---------|------|---------|
+| `system.status` | 连接建立时 | 一次性 | `pluginVersion`, `recordingState`, `timecode`, `fps`, `diskFreeBytes`, `cpuUsage` |
+| `system.heartbeat` | 保活 | 15 秒 | `{}`（空对象） |
+| `system.error` | 运行错误 | 按需 | `code`, `message` |
+| `timecode.tick` | 时间码更新（仅录制中） | 100ms | `timecode`（SMPTE 格式）, `frameIndex`, `fps` |
+| `recording.started` | 录制开始 | 一次性 | `recordingId`, `startTime`, `outputDir` |
+| `recording.stopped` | 录制停止 | 一次性 | `recordingId`, `duration`, `files[]` |
+| `recording.paused` | 录制暂停 | 一次性 | `recordingId` |
+| `recording.resumed` | 录制恢复 | 一次性 | `recordingId` |
+| `scene.changed` | 场景切换 | 一次性 | `sceneName`, `previousScene` |
+| `marker.added` | 标记添加 | 一次性 | 完整 Marker 对象（`id`, `name`, `timecode`, `timestamp`, `type`） |
+| `source.status` | 源状态变化 | 按需 | `sourceId`, `active`, `resolution`, `fps`, `audioLevel` |
+| `source.added` | 新输入源加入 | 一次性 | 完整 SourceInfo 对象 |
+| `source.removed` | 输入源移除 | 一次性 | `sourceId` |
+| `audio.level` | 音频电平 | 10 Hz | `sourceId`, `levels[]` |
+
+#### 4.3.1 关键事件 payload 示例
+
+**`system.status`**（连接建立时发送）：
+```json
+{
+  "pluginVersion": "1.0.0",
+  "recordingState": "idle",
+  "timecode": "00:00:00:00",
+  "fps": 60,
+  "diskFreeBytes": 262144000000,
+  "cpuUsage": 12.5
+}
+```
+
+**`timecode.tick`**（录制中每 100ms 推送）：
+```json
+{
+  "timecode": "01:23:45:06",
+  "frameIndex": 5025,
+  "fps": 60
+}
+```
+
+**`recording.started`**：
+```json
+{
+  "recordingId": "rec_20260513_123000",
+  "startTime": "2026-05-13T12:30:00.000+08:00",
+  "outputDir": "C:\\Recordings\\2026-05-13\\"
+}
+```
+
+**`recording.stopped`**：
+```json
+{
+  "recordingId": "rec_20260513_123000",
+  "duration": 125.5,
+  "files": [
+    { "sourceId": "cam_main", "path": "...", "size": 524288000 }
+  ]
+}
+```
+
+**`scene.changed`**：
+```json
+{
+  "sceneName": "main_pip",
+  "previousScene": "main_full"
+}
+```
+
+**`marker.added`**：
+```json
+{
+  "id": "mrk_001",
+  "name": "关键节点",
+  "type": "manual",
+  "timecode": "01:23:45:06",
+  "timestamp": "2026-05-13T12:31:05.000+08:00"
+}
+```
 
 ### 4.4 指令（客户端 → 插件）
 
-| action | 功能 | payload |
-|--------|------|---------|
-| `rec.start` | 启动录制 | `{}` |
-| `rec.stop` | 停止录制 | `{}` |
-| `rec.pause` | 暂停录制 | `{}` |
-| `rec.resume` | 恢复录制 | `{}` |
-| `scene.switch` | 切换场景 | `{ "sceneName": "main_pip", "transitionId": "fade" }` |
-| `source.show` | 显示源 | `{ "sourceName": "cam_top" }` |
-| `source.hide` | 隐藏源 | `{ "sourceName": "cam_top" }` |
-| `marker.add` | 添加标记 | `{ "name": "测试点", "type": "manual", "metadata": {} }` |
-| `sfx.play` | 播放音效 | `{ "sfxId": "beep", "volume": 1.0 }` |
-| `preset.load` | 加载预设 | `{ "presetId": "pre_001" }` |
-| `system.pong` | 心跳回复 | `{}` |
+| action | 功能 | payload | 响应（response） |
+|--------|------|---------|-----------------|
+| `rec.start` | 启动录制 | `{ "outputDir": "C:\\Recordings\\2026-05-13\\" }` | `{ "recordingId", "startTime", "outputDir" }` |
+| `rec.stop` | 停止录制 | `{}` | `{ "recordingId", "duration", "files[]" }` |
+| `rec.pause` | 暂停录制 | `{}` | `{ "recordingId" }` |
+| `rec.resume` | 恢复录制 | `{}` | `{ "recordingId" }` |
+| `scene.switch` | 切换场景 | `{ "sceneName": "main_pip" }` | `{ "sceneName" }` |
+| `source.show` | 显示源 | `{ "obsName": "HDMI Capture (主镜头)" }` | `{ "obsName" }` |
+| `source.hide` | 隐藏源 | `{ "obsName": "HDMI Capture (主镜头)" }` | `{ "obsName" }` |
+| `marker.add` | 添加标记 | `{ "name": "关键节点" }` | 完整 Marker 对象 |
+| `preset.load` | 加载预设 | `{ "presetId": "pre_001" }` | `{ "presetId" }` |
+| `sfx.play` | 播放音效 | `{ "sfxId": "beep", "volume": 1.0 }` | `{}` |
+| `system.pong` | 心跳回复 | `{}` | 无（无 type=response） |
+
+#### 4.4.1 指令 payload 详细格式
+
+**`rec.start`** — 启动录制：
+```json
+{
+  "type": "request",
+  "id": "uuid-v4",
+  "action": "rec.start",
+  "payload": {
+    "outputDir": "C:\\Recordings\\2026-05-13\\"
+  }
+}
+```
+
+**`rec.stop`** — 停止录制：
+```json
+{ "type": "request", "id": "uuid-v4", "action": "rec.stop", "payload": {} }
+```
+
+**`rec.pause` / `rec.resume`** — 暂停/恢复录制：
+```json
+{ "type": "request", "id": "uuid-v4", "action": "rec.pause", "payload": {} }
+```
+
+**`scene.switch`** — 切换场景：
+```json
+{
+  "type": "request",
+  "id": "uuid-v4",
+  "action": "scene.switch",
+  "payload": { "sceneName": "main_pip" }
+}
+```
+
+**`source.show` / `source.hide`** — 源显隐：
+```json
+{
+  "type": "request",
+  "id": "uuid-v4",
+  "action": "source.show",
+  "payload": { "obsName": "HDMI Capture (主镜头)" }
+}
+```
+
+**`marker.add`** — 添加标记：
+```json
+{
+  "type": "request",
+  "id": "uuid-v4",
+  "action": "marker.add",
+  "payload": { "name": "关键节点" }
+}
+```
+
+**`preset.load`** — 加载预设：
+```json
+{
+  "type": "request",
+  "id": "uuid-v4",
+  "action": "preset.load",
+  "payload": { "presetId": "pre_001" }
+}
+```
+
+**`system.pong`** — 心跳回复（type=event，不需要 response）：
+```json
+{ "type": "event", "id": "uuid-v4", "action": "system.pong", "payload": {} }
+```
 
 ---
 

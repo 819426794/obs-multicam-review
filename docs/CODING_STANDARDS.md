@@ -1,15 +1,18 @@
 # 编码规范 — obs-multicam-review
 
-> **版本**: v1.0 | **适用**: C++ (MSVC/CMake) + TypeScript (React/Vite)
+> **版本**: v1.1 | **适用**: C++ (MSVC/CMake) + TypeScript (React/Vite)
 
 ---
 
 ## 目录
 
 1. [C++ 规范](#1-c-规范)
+   - 1.7 [SourceRecordFilter 模块](#17-sourcerecordfilter-模块)
+   - 1.8 [WebSocket 通信函数](#18-websocket-通信函数)
 2. [TypeScript / React 规范](#2-typescript--react-规范)
 3. [JSON / API 数据规范](#3-json--api-数据规范)
 4. [文件组织规范](#4-文件组织规范)
+   - 4.3 [Markdown 文件规范](#43-markdown-文件规范)
 
 ---
 
@@ -108,6 +111,33 @@ obs_source_release(src);   // 用完后释放
 // ❌ 错误
 delete src;                // OBS 对象不是普通指针
 ```
+
+### 1.7 SourceRecordFilter 模块
+
+新增滤镜模块时需在插件加载/卸载时注册/注销 OBS 源类型：
+
+```cpp
+// obs_module_load() 中注册
+obs_register_source(&source_record_filter_info);
+
+// obs_module_unload() 中注销
+// OBS 自动处理 obs_source_info 注册的源类型，
+// 但需确保 obs_source_info 结构体为 static 生命周期
+```
+
+### 1.8 WebSocket 通信函数
+
+使用专用函数进行实时通信，命名遵循 `ws_` 前缀约定：
+
+```cpp
+// 发送消息给单个客户端
+void ws_send(struct mg_connection *conn, const std::string &msg);
+
+// 广播事件给所有已连接客户端
+void ws_broadcast_event(const std::string &event_type, const nlohmann::json &payload);
+```
+
+> 所有 WebSocket 消息必须通过这两个函数发送，禁止直接调用 `mg_websocket_write()`。
 
 ---
 
@@ -287,6 +317,13 @@ plugin/src/
 | TypeScript | kebab-case 或 camelCase | `recording-control.tsx` / `useRecording.ts` |
 | CSS | kebab-case | `recording-panel.css` |
 | 文档 | UPPER_SNAKE_CASE | `API_SPEC.md` |
+
+### 4.3 Markdown 文件规范
+
+- 第一个 `#` 标题应仅包含文件名（符合 GitHub 渲染习惯），例如：`# API_SPEC.md — obs-multicam-review`
+- 后续标题使用 `##`、`###` 等层级
+- 代码块必须标注语言：`` ````cpp` ````、`` ````typescript` ````、`` ````json` ````
+- 表格用 `|` 对齐，表头与内容用 `---` 分隔
 
 ---
 

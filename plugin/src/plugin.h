@@ -15,25 +15,21 @@
 // 前向声明
 struct PluginContext;
 struct WebServer;
-struct Recorder;
-struct TimecodeGen;
-struct SceneManager;
-namespace multicam { class SourceManager; class Database; class AudioManager; }
 struct AudioConsole;
-struct PresetManager;
+namespace multicam { class SourceManager; class Database; class AudioManager; class PresetManager; class Recorder; class TimecodeGen; class SceneManager; }
 
 // 插件全局上下文
 struct PluginContext {
     // 模块
     WebServer     *web_server;
-    Recorder      *recorder;
-    TimecodeGen   *timecode;
-    SceneManager  *scenes;
-    multicam::SourceManager *sources;
-    multicam::Database *database;
-    multicam::AudioManager *audio;
     AudioConsole  *audio_console;
-    PresetManager *presets;
+    multicam::Recorder      *recorder;
+    multicam::TimecodeGen   *timecode;
+    multicam::SceneManager  *scenes;
+    multicam::SourceManager *sources;
+    multicam::Database      *database;
+    multicam::AudioManager  *audio;
+    multicam::PresetManager *presets;
 
     // 状态
     bool recording_active;

@@ -1,10 +1,14 @@
 #pragma once
+#include <obs-module.h>
+
 #include <string>
 #include <vector>
 #include <mutex>
 #include <nlohmann/json.hpp>
 
 namespace multicam {
+
+struct SourceRecordFilter;  // forward declaration
 
 enum class RecState { Idle, Recording, Paused };
 
@@ -42,9 +46,26 @@ private:
     std::vector<RecFile> files_;
     std::mutex mutex_;
 
+    // Per-source independent recording — 通过 SourceRecordFilter 实现隔离
+    struct SourceOutput {
+        SourceRecordFilter *filter = nullptr;  // 滤镜指针（管理编码器+输出）
+        std::string         source_name;
+        std::string         file_path;
+    };
+    std::vector<SourceOutput> source_outputs_;
+
+    // Source-aware recording outputs
     bool create_output_for_source(const std::string &source_name);
     bool start_all_outputs();
     bool stop_all_outputs();
+
+    // Collect names of all active video/audio sources in the current scene
+    std::vector<std::string> collect_active_sources();
+
+    // Video encoder factory (kept for potential PGM recording or future use)
+    obs_encoder_t *create_video_encoder(const std::string &name);
+    // Audio encoder factory: AAC @ 320kbps
+    obs_encoder_t *create_audio_encoder(const std::string &name);
 };
 
 } // namespace multicam
